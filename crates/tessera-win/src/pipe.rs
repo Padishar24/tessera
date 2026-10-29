@@ -5,16 +5,17 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_FIRST_PIPE_INSTANCE, FlushFileBuffers, PIPE_ACCESS_DUPLEX,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FlushFileBuffers, PIPE_ACCESS_DUPLEX, SECURITY_ANONYMOUS,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
-    PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT, WaitNamedPipeW,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId,
+    PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT, WaitNamedPipeW,
 };
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -138,7 +139,13 @@ fn exchange(line: &str, timeout: Duration) -> io::Result<String> {
     let name = pipe_name();
     let deadline = Instant::now() + timeout;
     let mut pipe = loop {
-        match OpenOptions::new().read(true).write(true).open(&name) {
+        // Anonymous: a server squatting on the name cannot impersonate us.
+        let opened = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .security_qos_flags(SECURITY_ANONYMOUS.0)
+            .open(&name);
+        match opened {
             Ok(pipe) => break pipe,
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as i32) => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -152,12 +159,35 @@ fn exchange(line: &str, timeout: Duration) -> io::Result<String> {
             Err(e) => return Err(e),
         }
     };
+    check_server_session(&pipe)?;
 
     pipe.write_all(line.as_bytes())?;
     pipe.write_all(b"\n")?;
     let mut response = String::new();
     BufReader::new(pipe).read_line(&mut response)?;
     Ok(response.trim_end().to_owned())
+}
+
+/// The pipe name is global per machine: another user could create it before
+/// the daemon starts. Only talk to a server in our own session.
+fn check_server_session(pipe: &File) -> io::Result<()> {
+    let session_of = |pid: u32| {
+        let mut session = 0;
+        // SAFETY: output parameter points to a local variable.
+        unsafe { ProcessIdToSessionId(pid, &mut session) }.map(|()| session)
+    };
+    let mut server = 0;
+    // SAFETY: valid pipe handle owned by `pipe`; output parameter is local.
+    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut server) }?;
+    // SAFETY: pure query.
+    let own = unsafe { GetCurrentProcessId() };
+    if session_of(server)? != session_of(own)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "pipe is held by a process in another session",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
