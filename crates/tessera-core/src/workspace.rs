@@ -268,6 +268,21 @@ impl Workspace {
         ok
     }
 
+    /// Puts `new`, which is not in this workspace, in the place of `old`
+    /// (for swapping windows across workspaces).
+    pub fn replace(&mut self, old: WindowId, new: WindowId) -> bool {
+        if self.contains(new) {
+            return false;
+        }
+        if self.last_focus == Some(old) {
+            self.last_focus = None;
+        }
+        self.zones
+            .iter_mut()
+            .find(|z| z.tree.contains(old))
+            .is_some_and(|z| z.tree.swap_out(old, new))
+    }
+
     /// Zone under the point; for overlapping zones the smallest.
     pub fn zone_at(&self, x: i32, y: i32) -> Option<usize> {
         self.zones
@@ -428,6 +443,21 @@ mod tests {
         assert!(ws.swap(1, 2));
         assert_eq!((ws.zone_of(1), ws.zone_of(2)), (Some(1), Some(0)));
         assert_eq!(ws.rect_of(1), Some(RIGHT));
+    }
+
+    #[test]
+    fn replace_takes_over_the_place_of_another_window() {
+        let mut ws = two_zones();
+        ws.insert(1, Some(0), None);
+        ws.insert(2, Some(1), None);
+        ws.last_focus = Some(2);
+        assert!(ws.replace(2, 3));
+        assert_eq!((ws.zone_of(2), ws.zone_of(3)), (None, Some(1)));
+        assert_eq!(ws.rect_of(3), Some(RIGHT));
+        assert_eq!(ws.last_focus, None);
+        // Not for windows already in the workspace or missing ones.
+        assert!(!ws.replace(1, 3));
+        assert!(!ws.replace(9, 4));
     }
 
     #[test]

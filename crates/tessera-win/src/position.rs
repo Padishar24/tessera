@@ -13,10 +13,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetForegroundWindow, GetWindowRect, SC_RESTORE, SMTO_ABORTIFHUNG, SMTO_NORMAL,
-    SW_MAXIMIZE, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
-    SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW, SetForegroundWindow, SetWindowPos,
-    ShowWindowAsync, WM_SYSCOMMAND,
+    GetCursorPos, GetForegroundWindow, GetWindowRect, PostMessageW, SC_RESTORE, SMTO_ABORTIFHUNG,
+    SMTO_NORMAL, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SendMessageTimeoutW,
+    SetForegroundWindow, SetWindowPos, ShowWindowAsync, WM_CLOSE, WM_SYSCOMMAND,
 };
 
 use crate::window::{Borders, Window};
@@ -118,6 +118,25 @@ pub fn maximize(window: Window) {
     // SAFETY: asynchronous message to the window.
     unsafe {
         let _ = ShowWindowAsync(window.0, SW_MAXIMIZE);
+    }
+}
+
+/// Minimizes a window; the next window in the z-order gets the focus.
+pub fn minimize(window: Window) {
+    // SAFETY: asynchronous message to the window.
+    unsafe {
+        let _ = ShowWindowAsync(window.0, SW_MINIMIZE);
+    }
+}
+
+/// Asks a window to close, like its close button. Posted, so a hung
+/// application cannot block the daemon; the application may still ask
+/// about unsaved changes.
+pub fn close(window: Window) {
+    // SAFETY: posting a message to an arbitrary window is safe; it fails if
+    // the window no longer exists.
+    unsafe {
+        let _ = PostMessageW(Some(window.0), WM_CLOSE, WPARAM(0), LPARAM(0));
     }
 }
 

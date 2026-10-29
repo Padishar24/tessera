@@ -5,6 +5,10 @@
 //! runs on its own thread and only does the bare minimum there: look up the
 //! combination, swallow the key, pass on the action. If the hook takes too
 //! long, Windows silently removes it.
+//!
+//! For window hints the hook can also capture the keyboard for a moment:
+//! every key press then goes to the daemon instead of the focused window
+//! (see [`Hotkeys::set_capture`]).
 
 use std::collections::{HashMap, HashSet};
 use std::mem::size_of;
@@ -16,11 +20,12 @@ use tessera_core::action::Action;
 use tessera_core::keys::{Key, KeyCombo, Modifiers};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-    KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VkKeyScanW,
+    KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LCONTROL, VK_LMENU,
+    VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VkKeyScanW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
@@ -33,14 +38,30 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const VK_DUMMY: u16 = 0xE8;
 /// Thread message to the hook thread: reinstall the hook.
 const WM_REINSTALL: u32 = WM_APP + 10;
+/// The hook ends a keyboard capture by itself after this time, even if the
+/// daemon does not (hangs, misses the end): the keyboard must never stay
+/// captured.
+const CAPTURE_MS: u32 = 10_000;
 
-type Callback = Box<dyn Fn(Action) + Send>;
+/// What the hook reports to the daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookEvent {
+    /// A bound key combination was pressed.
+    Action(Action),
+    /// A key pressed during a capture. `Escape` ends the capture in the
+    /// hook right away.
+    Key { vk: u16, mods: Modifiers },
+}
+
+type Callback = Box<dyn Fn(HookEvent) + Send>;
 
 struct Shared {
     bindings: HashMap<(Modifiers, u16), Action>,
-    on_action: Callback,
+    on_event: Callback,
     /// Keys whose keydown was swallowed - swallow their keyup too.
     swallowed: HashSet<u16>,
+    /// Tick count (`GetTickCount`) until which all key presses are captured.
+    capture_until: Option<u32>,
 }
 
 static SHARED: Mutex<Option<Shared>> = Mutex::new(None);
@@ -52,12 +73,13 @@ pub struct Hotkeys {
 }
 
 impl Hotkeys {
-    /// `on_action` runs on the hook thread and must return immediately.
-    pub fn start(on_action: impl Fn(Action) + Send + 'static) -> anyhow::Result<Self> {
+    /// `on_event` runs on the hook thread and must return immediately.
+    pub fn start(on_event: impl Fn(HookEvent) + Send + 'static) -> anyhow::Result<Self> {
         *lock() = Some(Shared {
             bindings: HashMap::new(),
-            on_action: Box::new(on_action),
+            on_event: Box::new(on_event),
             swallowed: HashSet::new(),
+            capture_until: None,
         });
 
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -116,6 +138,16 @@ impl Hotkeys {
         // SAFETY: thread message to the hook thread.
         unsafe {
             let _ = PostThreadMessageW(self.thread_id, WM_REINSTALL, WPARAM(0), LPARAM(0));
+        }
+    }
+
+    /// Starts or ends capturing the keyboard: while it runs, every key press
+    /// is swallowed and reported as [`HookEvent::Key`]. A binding for
+    /// [`Action::Hint`] starts a capture in the hook itself, so that no key
+    /// pressed right after it slips through before the daemon reacts.
+    pub fn set_capture(&self, capture: bool) {
+        if let Some(shared) = lock().as_mut() {
+            shared.capture_until = capture.then(capture_deadline);
         }
     }
 
@@ -185,6 +217,18 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
+fn capture_deadline() -> u32 {
+    // SAFETY: pure query without parameters.
+    unsafe { GetTickCount() }.wrapping_add(CAPTURE_MS)
+}
+
+/// Is the tick count `deadline` still ahead (robust against wrap-around)?
+fn before(deadline: u32) -> bool {
+    // SAFETY: pure query without parameters.
+    let now = unsafe { GetTickCount() };
+    (deadline.wrapping_sub(now) as i32) > 0
+}
+
 /// `true` = swallow the key.
 fn handle(message: u32, vk: u16) -> bool {
     if is_modifier(vk) {
@@ -198,6 +242,24 @@ fn handle(message: u32, vk: u16) -> bool {
         WM_KEYUP | WM_SYSKEYUP => shared.swallowed.remove(&vk),
         WM_KEYDOWN | WM_SYSKEYDOWN => {
             let mods = current_modifiers();
+            if let Some(deadline) = shared.capture_until {
+                if before(deadline) {
+                    // Auto-repeat of a key that is still held (e.g. the key
+                    // that started the capture) is not a new key press.
+                    if !shared.swallowed.insert(vk) {
+                        return true;
+                    }
+                    if mods.contains(Modifiers::WIN) || mods.contains(Modifiers::ALT) {
+                        tap_dummy_key();
+                    }
+                    if vk == VK_ESCAPE.0 {
+                        shared.capture_until = None;
+                    }
+                    (shared.on_event)(HookEvent::Key { vk, mods });
+                    return true;
+                }
+                shared.capture_until = None;
+            }
             let Some(&action) = shared.bindings.get(&(mods, vk)) else {
                 return false;
             };
@@ -205,7 +267,10 @@ fn handle(message: u32, vk: u16) -> bool {
                 tap_dummy_key();
             }
             shared.swallowed.insert(vk);
-            (shared.on_action)(action);
+            if action == Action::Hint {
+                shared.capture_until = Some(capture_deadline());
+            }
+            (shared.on_event)(HookEvent::Action(action));
             true
         }
         _ => false,

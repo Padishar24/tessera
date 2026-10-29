@@ -12,6 +12,7 @@ use crate::geometry::{Rect, scale_px};
 use crate::keys::KeyCombo;
 use crate::layout::{DEFAULT_LAYOUTS, Layouts};
 use crate::rules::{RuleConfig, Rules};
+use crate::scratchpad::{ScratchpadConfig, Scratchpads};
 
 /// The bundled default configuration; copied to
 /// `%APPDATA%\Tessera\config.toml` on first start.
@@ -28,6 +29,7 @@ pub struct Config {
     /// Key combination → action, e.g. `"win+alt+h" = "focus left"`.
     pub keybindings: BTreeMap<String, String>,
     pub rules: Vec<RuleConfig>,
+    pub scratchpads: Vec<ScratchpadConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +105,8 @@ pub struct Appearance {
     pub zone_opacity: f32,
     /// Height of the tab bar above stacks in logical pixels.
     pub stack_bar_height: u32,
+    /// Close button on each tab of a stack's tab bar.
+    pub stack_close_button: bool,
 }
 
 impl Default for Appearance {
@@ -114,6 +118,7 @@ impl Default for Appearance {
             zone_highlight_color: Color::rgb(0x35, 0x84, 0xe4),
             zone_opacity: 0.45,
             stack_bar_height: 28,
+            stack_close_button: true,
         }
     }
 }
@@ -208,6 +213,7 @@ pub struct LoadedConfig {
     /// Sorted by key combination.
     pub bindings: Vec<(KeyCombo, Action)>,
     pub rules: Rules,
+    pub scratchpads: Scratchpads,
     pub layouts: Layouts,
 }
 
@@ -276,6 +282,29 @@ impl LoadedConfig {
             errors.extend(e);
             Rules::default()
         });
+        let scratchpads = Scratchpads::compile(&config.scratchpads).unwrap_or_else(|e| {
+            errors.extend(e);
+            Scratchpads::default()
+        });
+        for (i, pad) in config.scratchpads.iter().enumerate() {
+            let Some(key) = &pad.key else {
+                continue;
+            };
+            let Ok(number) = u8::try_from(i + 1) else {
+                continue;
+            };
+            match key.parse::<KeyCombo>() {
+                Ok(combo) => {
+                    let action = Action::ToggleScratchpad(number);
+                    if let Some((other, _)) = bindings.insert(combo, (key.clone(), action)) {
+                        errors.push(format!(
+                            "scratchpad {number}: key `{key}` is already bound as `{other}`"
+                        ));
+                    }
+                }
+                Err(e) => errors.push(format!("scratchpad {number}: key `{key}`: {e}")),
+            }
+        }
 
         if !errors.is_empty() {
             return Err(ConfigError::Invalid(errors));
@@ -283,6 +312,7 @@ impl LoadedConfig {
         Ok(Self {
             bindings: bindings.into_iter().map(|(c, (_, a))| (c, a)).collect(),
             rules,
+            scratchpads,
             layouts,
             config,
         })
@@ -327,6 +357,30 @@ mod tests {
             action_for("[general]\nexplorer_tabs = true\n[keybindings]\n\"win+e\" = \"quit\""),
             Some(Action::Quit)
         );
+    }
+
+    #[test]
+    fn scratchpad_keys_become_bindings() {
+        let text = r#"
+            [[scratchpads]]
+            name = "term"
+            exe = 'WindowsTerminal\.exe'
+            key = "win+alt+t"
+
+            [[scratchpads]]
+            name = "notes"
+            title = "scratch"
+        "#;
+        let loaded = LoadedConfig::parse(text).unwrap();
+        assert_eq!(loaded.scratchpads.len(), 2);
+        let key = "win+alt+t".parse::<KeyCombo>().unwrap();
+        assert_eq!(loaded.bindings, vec![(key, Action::ToggleScratchpad(1))]);
+
+        let clash = format!("{text}\n[keybindings]\n\"win+alt+t\" = \"quit\"\n");
+        let ConfigError::Invalid(errors) = LoadedConfig::parse(&clash).unwrap_err() else {
+            panic!("expected validation errors");
+        };
+        assert_eq!(errors.len(), 1, "{errors:#?}");
     }
 
     #[test]

@@ -173,6 +173,21 @@ impl Window {
         pid
     }
 
+    /// Full path of the executable. `None` if the process may not be
+    /// queried.
+    pub fn exe_path(self) -> Option<String> {
+        process_image(self.process_id())
+    }
+
+    /// Owner window (for dialogs and popups).
+    pub fn owner(self) -> Option<Window> {
+        // SAFETY: pure query.
+        unsafe { GetWindow(self.0, GW_OWNER) }
+            .ok()
+            .filter(|o| !o.is_invalid())
+            .map(Window)
+    }
+
     /// File name of the executable, e.g. `notepad.exe`. Empty if the process
     /// may not be queried.
     pub fn exe(self) -> String {

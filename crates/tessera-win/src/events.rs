@@ -49,10 +49,12 @@ pub enum Event {
     Timer(usize),
     /// The computer has resumed from sleep/hibernation.
     Resumed,
-    /// Click on a [`TabBar`](crate::tabbar::TabBar); `x` relative to the bar.
+    /// Click on a [`TabBar`](crate::tabbar::TabBar); `x` relative to the bar,
+    /// `middle` for the middle mouse button (closes the tab).
     TabClicked {
         bar: usize,
         x: i32,
+        middle: bool,
     },
 }
 

@@ -657,7 +657,9 @@ fn send(request: &Request) -> Result<(), String> {
     match tessera_win::pipe::call(request, Duration::from_secs(5)) {
         Ok(Response::Ok) => Ok(()),
         Ok(Response::Error { message }) => Err(message),
-        Ok(Response::State(_)) => Err("unexpected response from the daemon".into()),
+        Ok(Response::State(_) | Response::Scenes { .. }) => {
+            Err("unexpected response from the daemon".into())
+        }
         Err(e) => Err(e.to_string()),
     }
 }

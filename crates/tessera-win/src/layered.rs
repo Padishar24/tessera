@@ -38,6 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
+use windows_numerics::Vector2;
 
 pub struct Options {
     pub class: PCWSTR,
@@ -413,6 +414,29 @@ impl Painter<'_> {
         unsafe {
             self.target
                 .DrawRoundedRectangle(&rounded, &brush, width, None)
+        };
+        Ok(())
+    }
+
+    /// Straight line between two points in screen coordinates.
+    pub fn line(
+        &self,
+        from: (f32, f32),
+        to: (f32, f32),
+        color: Color,
+        alpha: f32,
+        width: f32,
+    ) -> windows::core::Result<()> {
+        let brush = self.brush(color, alpha)?;
+        let (ox, oy) = (self.origin.0 as f32, self.origin.1 as f32);
+        let point = |(x, y): (f32, f32)| Vector2 {
+            X: x - ox,
+            Y: y - oy,
+        };
+        // SAFETY: inside BeginDraw/EndDraw.
+        unsafe {
+            self.target
+                .DrawLine(point(from), point(to), &brush, width, None)
         };
         Ok(())
     }

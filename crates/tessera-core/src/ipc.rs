@@ -12,11 +12,33 @@ use crate::tree::ZoneMode;
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Request {
     /// An action in text form, e.g. `"focus left"`.
-    Action { action: String },
+    Action {
+        action: String,
+    },
     /// Snapshot of monitors and managed windows.
     QueryState,
     /// Set the layout on a monitor (current desktop).
-    SetLayout { monitor: String, layout: String },
+    SetLayout {
+        monitor: String,
+        layout: String,
+    },
+    /// Save the arrangement on the current desktop as a scene (replacing
+    /// one with the same name).
+    SaveScene {
+        name: String,
+        #[serde(default)]
+        auto: bool,
+        #[serde(default)]
+        launch: bool,
+    },
+    ApplyScene {
+        name: String,
+    },
+    DeleteScene {
+        name: String,
+    },
+    /// All saved scenes.
+    ListScenes,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,6 +47,19 @@ pub enum Response {
     Ok,
     Error { message: String },
     State(StateSnapshot),
+    Scenes { scenes: Vec<SceneSummary> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneSummary {
+    pub name: String,
+    pub auto: bool,
+    pub launch: bool,
+    /// Display names of the scene's monitors.
+    pub monitors: Vec<String>,
+    pub windows: usize,
+    /// Exactly the scene's monitors are connected right now.
+    pub current_monitors: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -92,6 +127,9 @@ pub struct WindowState {
     pub on_other_desktop: bool,
     pub rule_float: bool,
     pub rule_zone: Option<u8>,
+    /// Name of the scratchpad the window belongs to.
+    #[serde(default)]
+    pub scratchpad: Option<String>,
 }
 
 #[cfg(test)]
@@ -125,6 +163,16 @@ mod tests {
                 message: "broken".into(),
             },
             state,
+            Response::Scenes {
+                scenes: vec![SceneSummary {
+                    name: "desk".into(),
+                    auto: true,
+                    launch: false,
+                    monitors: vec!["DELL U2720Q".into()],
+                    windows: 3,
+                    current_monitors: true,
+                }],
+            },
         ] {
             let json = serde_json::to_string(&response).unwrap();
             assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), response);

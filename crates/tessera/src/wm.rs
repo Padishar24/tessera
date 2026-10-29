@@ -2,23 +2,29 @@
 //! desktop, zones, actions. Runs exclusively on the main thread.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use tessera_core::action::{Action, Cycle, Direction, Resize};
 use tessera_core::config::LoadedConfig;
 use tessera_core::geometry::{Rect, scale_px};
+use tessera_core::hint::{self, HintMatch};
 use tessera_core::ipc::{MonitorState, ShowState, StateSnapshot, WindowState};
+use tessera_core::keys::Modifiers;
 use tessera_core::nav;
 use tessera_core::rules::{RuleEffect, WindowProps};
+use tessera_core::scene::{Scene as SavedScene, SceneMonitor, SceneWindow};
+use tessera_core::scratchpad::expand_env;
 use tessera_core::state::{SavedState, SavedWindow, SavedWorkspace};
 use tessera_core::tree::{Node, Orientation, Placement, WindowId, ZoneMode};
 use tessera_core::workspace::Zone;
-use tessera_core::workspace::{DropTarget, Workspace};
+use tessera_core::workspace::{DropSide, DropTarget, Workspace};
 use tessera_win::events::WindowEvent;
+use tessera_win::hints::{Hint, HintOverlay, HintStyle};
 use tessera_win::monitor::{self, Monitor};
 use tessera_win::msgloop::Timers;
 use tessera_win::overlay::{Scene, Style, ZoneOverlay};
 use tessera_win::position;
-use tessera_win::tabbar::{TabBar, Tabs};
+use tessera_win::tabbar::{TabBar, TabHit, Tabs};
 use tessera_win::vdesk::{self, DesktopManager, DesktopNotice};
 use tessera_win::window::{Cloak, Window};
 
@@ -38,6 +44,19 @@ const DRIFT_DELAY_MS: u32 = 200;
 /// If an application moves itself again after every correction, there
 /// would otherwise be an endless back and forth.
 const MAX_DRIFT_CORRECTIONS: u8 = 3;
+/// Timer: window hints disappear if nothing is typed for this long.
+const HINT_TIMER: usize = 4;
+const HINT_MS: u32 = 8_000;
+/// A window that appears this long after its scratchpad's program was
+/// started is shown right away.
+const SCRATCHPAD_LAUNCH_WAIT: Duration = Duration::from_secs(30);
+/// The program of a scratchpad is not started again within this time.
+const SCRATCHPAD_START_DEBOUNCE: Duration = Duration::from_secs(10);
+/// How long windows started by a scene are waited for.
+const SCENE_LAUNCH_WAIT: Duration = Duration::from_secs(60);
+/// At most this many programs are started per scene.
+const SCENE_MAX_LAUNCHES: usize = 20;
+const VK_BACK: u16 = 0x08;
 
 /// Workspace = monitor ID × desktop GUID.
 type WsKey = (String, String);
@@ -46,6 +65,39 @@ type WsKey = (String, String);
 enum Mode {
     Tiled,
     Floating,
+    /// Belongs to a scratchpad: floats, minimized while hidden.
+    Scratchpad,
+}
+
+/// Window hints being shown: the windows, their labels and what has been
+/// typed so far.
+struct HintSession {
+    targets: Vec<Window>,
+    labels: Vec<String>,
+    hints: Vec<Hint>,
+    typed: String,
+}
+
+/// State of a scratchpad from `config.toml`, by its position there.
+#[derive(Default)]
+struct ScratchSlot {
+    name: String,
+    window: Option<Window>,
+    /// When its program was started because it had no window.
+    launched: Option<Instant>,
+    /// Monitor it is summoned to (the one in use when it was summoned).
+    monitor: Option<String>,
+}
+
+/// A window started by a scene: lands in its zone when it appears.
+struct PendingWindow {
+    monitor: String,
+    /// 0-based.
+    zone: usize,
+    exe: String,
+    class: String,
+    title: String,
+    until: Instant,
 }
 
 /// State of a window before Tessera tiled it.
@@ -174,6 +226,14 @@ pub struct Wm {
     /// During a batch phase: what gets arranged at the end (see
     /// [`Wm::with_batched_apply`]).
     batch: Option<Batch>,
+    hints: Option<HintSession>,
+    hint_overlay: HintOverlay,
+    /// One entry per scratchpad in the configuration.
+    scratch: Vec<ScratchSlot>,
+    /// Windows that already existed at startup are being taken over.
+    adopting: bool,
+    /// Windows a scene started and that have not appeared yet.
+    pending: Vec<PendingWindow>,
 }
 
 impl Wm {
@@ -205,7 +265,13 @@ impl Wm {
             desktop_notices,
             drifting: HashSet::new(),
             batch: None,
+            hints: None,
+            hint_overlay: HintOverlay::new(),
+            scratch: Vec::new(),
+            adopting: false,
+            pending: Vec::new(),
         };
+        wm.sync_scratchpads();
         wm.refresh_monitors();
         wm.foreground = position::foreground();
         wm.update_border(wm.foreground);
@@ -214,6 +280,20 @@ impl Wm {
 
     pub fn window_count(&self) -> usize {
         self.windows.len()
+    }
+
+    /// Takes over the windows that exist at startup (in z-order, topmost
+    /// first). Scratchpad windows among them are hidden rather than shown.
+    pub fn adopt_existing(&mut self, windows: Vec<Window>) {
+        self.adopting = true;
+        // Insert from back to front so that the topmost one comes last.
+        // Arranging only happens once all of them are inserted.
+        self.with_batched_apply(|wm| {
+            for existing in windows.into_iter().rev() {
+                wm.on_window_event(WindowEvent::Shown, existing);
+            }
+        });
+        self.adopting = false;
     }
 
     // ----- Events -------------------------------------------------------------
@@ -245,6 +325,7 @@ impl Wm {
                     if self.bars.iter().any(|s| s.windows.contains(&window.id())) {
                         self.refresh_bars();
                     }
+                    self.claim_on_title_change(window);
                 }
             }
             WindowEvent::MoveSizeStart => self.on_drag_start(window),
@@ -441,15 +522,27 @@ impl Wm {
         }
     }
 
-    /// Click on a tab: bring the window in the stack to the front and focus it.
-    pub fn on_tab_clicked(&mut self, bar: usize, x: i32) {
+    /// Click on a tab: bring the window in the stack to the front and focus
+    /// it. A click on its close button or with the middle button closes the
+    /// window instead.
+    pub fn on_tab_clicked(&mut self, bar: usize, x: i32, middle: bool) {
         let Some(slot) = self.bars.get(bar) else {
             return;
         };
-        let Some(&id) = slot.bar.tab_at(x).and_then(|i| slot.windows.get(i)) else {
+        let (index, close) = match slot.bar.hit_at(x) {
+            Some(TabHit::Tab(i)) => (i, middle),
+            Some(TabHit::Close(i)) => (i, true),
+            None => return,
+        };
+        let Some(&id) = slot.windows.get(index) else {
             return;
         };
         let window = Window::from_id(id);
+        if close {
+            tracing::debug!(hwnd = id, "Closing window from its tab");
+            position::close(window);
+            return;
+        }
         if let Some(key) = self.workspace_of(window) {
             self.workspaces
                 .get_mut(&key)
@@ -464,6 +557,7 @@ impl Wm {
         match id {
             DRAG_TIMER => self.drag_tick(),
             DRIFT_TIMER => self.correct_drift(),
+            HINT_TIMER => self.end_hints(),
             FLASH_TIMER => {
                 self.timers.kill(FLASH_TIMER);
                 if self.drag.is_none() {
@@ -475,10 +569,19 @@ impl Wm {
     }
 
     /// Re-read the monitors (connected, disconnected, taskbar moved, scaling
-    /// changed) and rearrange everything.
-    pub fn refresh_monitors(&mut self) {
+    /// changed) and rearrange everything. Returns whether a monitor was
+    /// connected or disconnected (not at the first call).
+    pub fn refresh_monitors(&mut self) -> bool {
         let monitors = monitor::enumerate();
+        let mut connections_changed = false;
         if monitors != self.monitors {
+            let ids = |list: &[Monitor]| {
+                let mut ids: Vec<String> = list.iter().map(|m| m.id.clone()).collect();
+                ids.sort_unstable();
+                ids
+            };
+            connections_changed =
+                !self.monitors.is_empty() && ids(&monitors) != ids(&self.monitors);
             for m in &monitors {
                 tracing::info!(
                     id = m.id,
@@ -497,22 +600,26 @@ impl Wm {
         // unnoticed until the next switch.
         self.desktop_cache = vdesk::current_desktop().unwrap_or_default();
         self.relayout_workspaces();
+        connections_changed
     }
 
     /// After reloading the configuration: apply rules, gaps and layouts.
     pub fn config_changed(&mut self) {
+        self.end_hints();
         let ignored: Vec<Window> = self
             .windows
             .iter_mut()
             .filter_map(|(window, tracked)| {
                 tracked.rule = self.config.rules.find(props(tracked));
-                tracked.rule.is_some_and(|r| r.ignore).then_some(*window)
+                (tracked.mode != Mode::Scratchpad && tracked.rule.is_some_and(|r| r.ignore))
+                    .then_some(*window)
             })
             .collect();
         self.with_batched_apply(|wm| {
             for window in ignored {
                 wm.release(window, WindowEvent::Hidden);
             }
+            wm.sync_scratchpads();
             // The border's color or on/off state may have changed.
             if let Some(old) = wm.border.take() {
                 position::set_border_color(old, None);
@@ -545,6 +652,7 @@ impl Wm {
 
     /// On exit: reset tiled windows to their original state.
     pub fn shutdown(&mut self) {
+        self.end_hints();
         self.hide_zones();
         for slot in &mut self.bars {
             slot.bar.hide();
@@ -593,6 +701,15 @@ impl Wm {
             drift: None,
         };
         tracked.rule = self.config.rules.find(props(&tracked));
+        if let Some(index) = self.config.scratchpads.find(props(&tracked))
+            && self.scratchpad_window(index).is_none()
+        {
+            tracked.mode = Mode::Scratchpad;
+            self.windows.insert(window, tracked);
+            let show = !self.adopting;
+            self.claim_scratchpad(index, window, show);
+            return;
+        }
         if tracked.rule.is_some_and(|r| r.ignore) {
             tracing::debug!(hwnd = window.id(), exe = tracked.exe, "ignored by rule");
             return;
@@ -639,6 +756,11 @@ impl Wm {
             position::set_border_color(window, None);
         }
         self.drifting.remove(&window);
+        for slot in &mut self.scratch {
+            if slot.window == Some(window) {
+                slot.window = None;
+            }
+        }
         let Some(tracked) = self.windows.remove(&window) else {
             return;
         };
@@ -657,7 +779,8 @@ impl Wm {
             return;
         };
         tracked.drift = None;
-        if tracked.original.is_none() {
+        let first_time = tracked.original.is_none();
+        if first_time {
             // Rect in the restored state: on `MinimizeEnd` the window is still
             // minimized and would otherwise be at -32000/-32000.
             tracked.original = Some(Original {
@@ -669,12 +792,19 @@ impl Wm {
             .rule
             .and_then(|r| r.zone)
             .map(|z| usize::from(z) - 1);
-        let (key, next_to) = match target {
-            Some(target) => target,
-            None => (self.key_for_window(window), None),
+        // Started by a scene: into the scene's monitor and zone. Only for
+        // windows tiled for the first time, not e.g. restored ones.
+        let pending = match (&target, rule_zone) {
+            (None, None) if first_time => self.take_pending(window),
+            _ => None,
+        };
+        let (key, next_to) = match (target, &pending) {
+            (Some(target), _) => target,
+            (None, Some((monitor, _))) => ((monitor.clone(), self.key_for_window(window).1), None),
+            (None, None) => (self.key_for_window(window), None),
         };
         // Without a rule: the zone from the last run, if the window was there.
-        let zone = rule_zone.or_else(|| {
+        let zone = rule_zone.or(pending.map(|(_, zone)| zone)).or_else(|| {
             let tracked = &self.windows[&window];
             self.saved.take_zone(&key.0, &key.1, props(tracked))
         });
@@ -735,6 +865,10 @@ impl Wm {
             return;
         }
         tracked.minimized = minimized;
+        if tracked.mode == Mode::Scratchpad {
+            self.on_scratchpad_minimize(window, minimized);
+            return;
+        }
         if tracked.mode != Mode::Tiled {
             return;
         }
@@ -746,6 +880,7 @@ impl Wm {
     }
 
     fn on_foreground(&mut self, window: Window) {
+        self.hide_scratchpads_on_focus_loss(window);
         self.foreground = Some(window);
         self.update_border(Some(window));
         let Some(key) = self.workspace_of(window) else {
@@ -803,7 +938,12 @@ impl Wm {
     // ----- Dragging with the mouse ----------------------------------------------
 
     fn on_drag_start(&mut self, window: Window) {
-        if !self.windows.contains_key(&window) {
+        // Scratchpads are moved freely and never dropped into a zone.
+        if self
+            .windows
+            .get(&window)
+            .is_none_or(|t| t.mode == Mode::Scratchpad)
+        {
             return;
         }
         self.drag = Some(Drag {
@@ -1020,6 +1160,8 @@ impl Wm {
                 vdesk::switch_to(usize::from(n) - 1)
             }
             Action::MoveToDesktop(n) => self.move_to_desktop(usize::from(n) - 1),
+            Action::Hint => self.start_hints(),
+            Action::ToggleScratchpad(n) => self.toggle_scratchpad(usize::from(n) - 1),
             Action::OpenEditor | Action::OpenExplorer | Action::ReloadConfig | Action::Quit => {
                 unreachable!("handled by the daemon")
             }
@@ -1092,6 +1234,7 @@ impl Wm {
         let window = self
             .focused()
             .ok_or("no managed window in the foreground")?;
+        self.require_not_scratchpad(window)?;
         let key = self
             .workspace_of(window)
             .unwrap_or_else(|| self.key_for_window(window));
@@ -1161,6 +1304,7 @@ impl Wm {
         let window = self
             .focused()
             .ok_or("no managed window in the foreground")?;
+        self.require_not_scratchpad(window)?;
         let tracked = self.windows.get_mut(&window).expect("managed");
         match tracked.mode {
             Mode::Tiled => {
@@ -1176,8 +1320,675 @@ impl Wm {
                 tracked.original = None;
                 self.tile(window, None);
             }
+            Mode::Scratchpad => unreachable!("checked above"),
         }
         Ok(())
+    }
+
+    fn require_not_scratchpad(&self, window: Window) -> Result<(), String> {
+        match self.windows.get(&window) {
+            Some(t) if t.mode == Mode::Scratchpad => {
+                Err("the window is a scratchpad and always floats".into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    // ----- Window hints ---------------------------------------------------------
+
+    /// The hints capture the keyboard (see [`Wm::on_hint_key`]).
+    pub fn hints_active(&self) -> bool {
+        self.hints.is_some()
+    }
+
+    /// Labels every visible window on the current desktop with letters.
+    fn start_hints(&mut self) -> Result<(), String> {
+        self.end_hints();
+        let hidden: HashSet<WindowId> = self
+            .workspaces
+            .values()
+            .flat_map(|ws| ws.placements())
+            .filter(|p| !p.visible)
+            .map(|p| p.id)
+            .collect();
+        let mut candidates: Vec<(Window, Rect, &Monitor)> = self
+            .windows
+            .iter()
+            .filter(|(w, t)| {
+                !t.minimized
+                    && !w.is_minimized()
+                    && w.is_visible()
+                    && !hidden.contains(&w.id())
+                    && !self.is_on_other_desktop(**w)
+            })
+            .filter_map(|(w, _)| {
+                let rect = w.rect();
+                let (cx, cy) = rect.center();
+                let monitor = self
+                    .monitors
+                    .iter()
+                    .find(|m| m.rect.contains_point(cx, cy))?;
+                Some((*w, rect, monitor))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return Err("no window to jump to".into());
+        }
+        // Reading order: monitors from left to right, then top to bottom.
+        candidates
+            .sort_by_key(|(_, rect, monitor)| (monitor.rect.x, monitor.rect.y, rect.y, rect.x));
+        let labels = hint::labels(candidates.len());
+        candidates.truncate(labels.len());
+        let hints = candidates
+            .iter()
+            .zip(&labels)
+            .map(|((window, rect, monitor), label)| {
+                let tracked = &self.windows[window];
+                Hint {
+                    label: label.clone(),
+                    title: if tracked.title.is_empty() {
+                        tracked.exe.clone()
+                    } else {
+                        tracked.title.clone()
+                    },
+                    window: *rect,
+                    dpi: monitor.dpi,
+                }
+            })
+            .collect();
+        let targets = candidates.iter().map(|(w, _, _)| *w).collect();
+        self.hints = Some(HintSession {
+            targets,
+            labels,
+            hints,
+            typed: String::new(),
+        });
+        self.draw_hints();
+        Ok(())
+    }
+
+    fn draw_hints(&mut self) {
+        let Some(session) = &self.hints else {
+            return;
+        };
+        let appearance = &self.config.config.appearance;
+        let style = HintStyle {
+            background: appearance.zone_color,
+            highlight: appearance.zone_highlight_color,
+        };
+        if let Err(e) = self
+            .hint_overlay
+            .show(&session.hints, &session.typed, style)
+        {
+            tracing::warn!("Window hints could not be drawn: {e:#}");
+        }
+        // Every key press restarts the countdown.
+        self.timers.set(HINT_TIMER, HINT_MS);
+    }
+
+    pub fn end_hints(&mut self) {
+        if self.hints.take().is_some() {
+            self.hint_overlay.hide();
+            self.timers.kill(HINT_TIMER);
+        }
+    }
+
+    /// Key pressed while the hints capture the keyboard. Letters select a
+    /// window: alone they focus it, with Shift it swaps places with the
+    /// focused window, with Ctrl it joins the focused window's stack.
+    /// Backspace takes back a letter; any other key cancels.
+    pub fn on_hint_key(&mut self, vk: u16, mods: Modifiers) {
+        let Some(session) = &mut self.hints else {
+            return;
+        };
+        match vk {
+            0x41..=0x5A => session.typed.push((vk as u8 as char).to_ascii_lowercase()),
+            VK_BACK => {
+                session.typed.pop();
+                self.draw_hints();
+                return;
+            }
+            _ => {
+                self.end_hints();
+                return;
+            }
+        }
+        match hint::resolve(&session.labels, &session.typed) {
+            HintMatch::Exact(index) => {
+                let target = session.targets[index];
+                self.end_hints();
+                if let Err(message) = self.jump(target, mods) {
+                    tracing::info!("hint: {message}");
+                }
+            }
+            HintMatch::Prefix => self.draw_hints(),
+            HintMatch::None => self.end_hints(),
+        }
+    }
+
+    fn jump(&mut self, target: Window, mods: Modifiers) -> Result<(), String> {
+        if !self.windows.contains_key(&target) {
+            return Err("the window no longer exists".into());
+        }
+        if mods.contains(Modifiers::CTRL) {
+            self.pull_into_stack(target)
+        } else if mods.contains(Modifiers::SHIFT) {
+            self.swap_with(target)
+        } else if position::focus(target) {
+            Ok(())
+        } else {
+            Err("Windows refused the focus change".into())
+        }
+    }
+
+    /// The focused window and `target` swap places, also across zones and
+    /// monitors. Both must be tiled.
+    fn swap_with(&mut self, target: Window) -> Result<(), String> {
+        let (window, key) = self.focused_tiled()?;
+        if window == target {
+            return Ok(());
+        }
+        let target_key = self
+            .workspace_of(target)
+            .ok_or("the selected window is not tiled")?;
+        let (a, b) = (window.id(), target.id());
+        if key == target_key {
+            self.workspace_mut(&key).swap(a, b);
+        } else {
+            self.workspace_mut(&key).replace(a, b);
+            self.workspace_mut(&target_key).replace(b, a);
+            self.apply(&target_key);
+        }
+        self.apply(&key);
+        Ok(())
+    }
+
+    /// `target` joins the stack of the focused window (which must be tiled)
+    /// and comes to the front; floating windows get tiled in the process.
+    fn pull_into_stack(&mut self, target: Window) -> Result<(), String> {
+        let (window, key) = self.focused_tiled()?;
+        if window == target {
+            return Ok(());
+        }
+        self.require_not_scratchpad(target)?;
+        let zone = self.workspaces[&key]
+            .zone_of(window.id())
+            .ok_or("window is not in any zone")?;
+        if let Some(old) = self.workspace_of(target)
+            && old != key
+        {
+            self.untile(target);
+        }
+        self.mark_tiled(target, target.rect());
+        self.workspace_mut(&key).insert_at(
+            target.id(),
+            DropTarget {
+                zone,
+                beside: Some((window.id(), DropSide::Stack)),
+            },
+        );
+        self.apply(&key);
+        position::focus(target);
+        Ok(())
+    }
+
+    // ----- Scratchpads ------------------------------------------------------------
+
+    /// Matches the scratchpad slots to the (possibly reloaded)
+    /// configuration by name. Windows of removed scratchpads become normal
+    /// floating windows; scratchpads without a window take over a matching
+    /// managed window (hidden).
+    fn sync_scratchpads(&mut self) {
+        let mut old = std::mem::take(&mut self.scratch);
+        self.scratch = self
+            .config
+            .scratchpads
+            .iter()
+            .map(|pad| {
+                let index = old.iter().position(|s| s.name == pad.name());
+                index.map_or_else(
+                    || ScratchSlot {
+                        name: pad.name().to_owned(),
+                        ..Default::default()
+                    },
+                    |i| old.swap_remove(i),
+                )
+            })
+            .collect();
+        for slot in old {
+            if let Some(window) = slot.window
+                && let Some(tracked) = self.windows.get_mut(&window)
+            {
+                tracked.mode = Mode::Floating;
+                tracing::info!(hwnd = window.id(), name = slot.name, "Scratchpad removed");
+            }
+        }
+        for index in 0..self.scratch.len() {
+            if self.scratchpad_window(index).is_some() {
+                continue;
+            }
+            let pad = self.config.scratchpads.get(index).expect("same length");
+            let found = self
+                .windows
+                .iter()
+                .find(|(_, t)| t.mode != Mode::Scratchpad && pad.matches(props(t)))
+                .map(|(w, _)| *w);
+            if let Some(window) = found {
+                self.untile(window);
+                let tracked = self.windows.get_mut(&window).expect("managed");
+                tracked.mode = Mode::Scratchpad;
+                self.claim_scratchpad(index, window, false);
+            }
+        }
+    }
+
+    /// A managed window whose title now matches a scratchpad without a
+    /// window becomes that scratchpad and is shown. Some programs set the
+    /// title only after the window appears (Notepad shows the file name
+    /// once it has opened the file).
+    fn claim_on_title_change(&mut self, window: Window) {
+        let Some(tracked) = self.windows.get(&window) else {
+            return;
+        };
+        if tracked.mode == Mode::Scratchpad {
+            return;
+        }
+        let Some(index) = self.config.scratchpads.find(props(tracked)) else {
+            return;
+        };
+        if self.scratchpad_window(index).is_some() {
+            return;
+        }
+        self.untile(window);
+        let tracked = self.windows.get_mut(&window).expect("managed");
+        tracked.mode = Mode::Scratchpad;
+        self.claim_scratchpad(index, window, true);
+    }
+
+    /// The live window of scratchpad `index`.
+    fn scratchpad_window(&self, index: usize) -> Option<Window> {
+        self.scratch
+            .get(index)?
+            .window
+            .filter(|w| self.windows.contains_key(w) && w.exists())
+    }
+
+    fn scratchpad_of(&self, window: Window) -> Option<usize> {
+        self.scratch.iter().position(|s| s.window == Some(window))
+    }
+
+    /// `window` (already in `Mode::Scratchpad`) becomes the window of
+    /// scratchpad `index`. It is shown if it was started for that or `show`
+    /// is set (a program the user just started), otherwise hidden.
+    fn claim_scratchpad(&mut self, index: usize, window: Window, show: bool) {
+        let slot = &mut self.scratch[index];
+        let launched = slot
+            .launched
+            .take()
+            .is_some_and(|t| t.elapsed() < SCRATCHPAD_LAUNCH_WAIT);
+        slot.window = Some(window);
+        tracing::info!(
+            hwnd = window.id(),
+            name = slot.name,
+            "Window is a scratchpad"
+        );
+        if window.is_minimized() {
+            return;
+        }
+        if show || launched {
+            self.summon(index);
+        } else {
+            position::minimize(window);
+        }
+    }
+
+    /// Hides the scratchpad if it is in front, otherwise brings it to the
+    /// current monitor; without a window its program is started.
+    fn toggle_scratchpad(&mut self, index: usize) -> Result<(), String> {
+        let pad = self
+            .config
+            .scratchpads
+            .get(index)
+            .ok_or_else(|| format!("there is no scratchpad {}", index + 1))?
+            .config
+            .clone();
+        match self.scratchpad_window(index) {
+            Some(window) if !window.is_minimized() && position::foreground() == Some(window) => {
+                position::minimize(window);
+                Ok(())
+            }
+            Some(_) => {
+                self.summon(index);
+                Ok(())
+            }
+            None => {
+                let command = pad.command.as_deref().ok_or_else(|| {
+                    format!(
+                        "scratchpad `{}`: no window matches and no command is set",
+                        pad.name
+                    )
+                })?;
+                if self.scratch[index]
+                    .launched
+                    .is_some_and(|t| t.elapsed() < SCRATCHPAD_START_DEBOUNCE)
+                {
+                    return Err(format!(
+                        "scratchpad `{}`: its program is still starting",
+                        pad.name
+                    ));
+                }
+                let expand = |text: &str| expand_env(text, |name| std::env::var(name).ok());
+                let args: Vec<String> = pad.args.iter().map(|a| expand(a)).collect();
+                spawn(&expand(command), &args)?;
+                let monitor = self.summon_monitor();
+                let slot = &mut self.scratch[index];
+                slot.launched = Some(Instant::now());
+                slot.monitor = monitor;
+                tracing::info!(name = pad.name, command, "Scratchpad program started");
+                Ok(())
+            }
+        }
+    }
+
+    /// Brings the scratchpad to the current desktop and monitor and focuses
+    /// it. A minimized one is placed once it is restored
+    /// ([`Wm::on_scratchpad_minimize`]).
+    fn summon(&mut self, index: usize) {
+        let Some(window) = self.scratchpad_window(index) else {
+            return;
+        };
+        self.scratch[index].monitor = self.summon_monitor();
+        if self.desktop_control && self.is_on_other_desktop(window) {
+            let current = self.current_desktop();
+            if let Some(i) = vdesk::desktop_ids()
+                .ok()
+                .and_then(|ids| ids.iter().position(|id| *id == current))
+                && let Err(e) = vdesk::move_window(window, i)
+            {
+                tracing::warn!("Scratchpad could not be moved to this desktop: {e}");
+            }
+        }
+        if !window.is_minimized() {
+            self.place_scratchpad(index);
+        }
+        position::focus(window);
+    }
+
+    fn place_scratchpad(&self, index: usize) {
+        let (Some(window), Some(pad)) = (
+            self.scratchpad_window(index),
+            self.config.scratchpads.get(index),
+        ) else {
+            return;
+        };
+        let monitor = self.scratch[index]
+            .monitor
+            .as_ref()
+            .and_then(|id| self.monitors.iter().find(|m| m.id == *id))
+            .or_else(|| self.monitor_at_cursor());
+        if let Some(monitor) = monitor {
+            position::set_rect(window, pad.rect(monitor.work_area));
+        }
+    }
+
+    /// Monitor of the focused window (unless it is a scratchpad itself),
+    /// otherwise the one under the mouse pointer.
+    fn summon_monitor(&self) -> Option<String> {
+        let handle = self
+            .focused()
+            .filter(|w| self.windows[w].mode != Mode::Scratchpad)
+            .map(monitor::handle_for_window);
+        handle
+            .and_then(|h| self.monitors.iter().find(|m| m.handle == h))
+            .or_else(|| self.monitor_at_cursor())
+            .map(|m| m.id.clone())
+    }
+
+    fn monitor_at_cursor(&self) -> Option<&Monitor> {
+        let (x, y) = position::cursor_pos();
+        self.monitors
+            .iter()
+            .find(|m| m.rect.contains_point(x, y))
+            .or(self.monitors.first())
+    }
+
+    /// A scratchpad was restored (by [`Wm::summon`] or from the taskbar):
+    /// put it in its place. When it is minimized, it next appears on the
+    /// monitor in use then.
+    fn on_scratchpad_minimize(&mut self, window: Window, minimized: bool) {
+        let Some(index) = self.scratchpad_of(window) else {
+            return;
+        };
+        if minimized {
+            self.scratch[index].monitor = None;
+        } else {
+            if self.scratch[index].monitor.is_none() {
+                self.scratch[index].monitor = self.monitor_at_cursor().map(|m| m.id.clone());
+            }
+            self.place_scratchpad(index);
+        }
+    }
+
+    /// Hides scratchpads with `hide_on_focus_loss` when another window
+    /// (that is not one of their dialogs) comes to the front.
+    fn hide_scratchpads_on_focus_loss(&self, foreground: Window) {
+        for (index, pad) in self.config.scratchpads.iter().enumerate() {
+            if !pad.config.hide_on_focus_loss {
+                continue;
+            }
+            if let Some(window) = self.scratchpad_window(index)
+                && window != foreground
+                && foreground.owner() != Some(window)
+                && !window.is_minimized()
+            {
+                position::minimize(window);
+            }
+        }
+    }
+
+    // ----- Scenes -------------------------------------------------------------------
+
+    /// Identifiers of the connected monitors.
+    pub fn monitor_ids(&self) -> Vec<&str> {
+        self.monitors.iter().map(|m| m.id.as_str()).collect()
+    }
+
+    /// Display names of the connected monitors, e.g. for naming a scene.
+    pub fn monitor_names(&self) -> Vec<&str> {
+        self.monitors.iter().map(|m| m.name.as_str()).collect()
+    }
+
+    /// Display name of a monitor, if it is connected.
+    pub fn monitor_name(&self, id: &str) -> Option<&str> {
+        self.monitors
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| m.name.as_str())
+    }
+
+    /// The arrangement of all monitors on the current desktop as a scene.
+    pub fn capture_scene(&self, name: &str, auto: bool, launch: bool) -> SavedScene {
+        let desktop = self.current_desktop();
+        let monitors = self
+            .monitors
+            .iter()
+            .map(|m| {
+                let ws = self.workspaces.get(&(m.id.clone(), desktop.clone()));
+                SceneMonitor {
+                    id: m.id.clone(),
+                    name: m.name.clone(),
+                    layout: ws.map_or_else(
+                        || self.config.config.general.default_layout.clone(),
+                        |ws| ws.layout.clone(),
+                    ),
+                    zones: ws
+                        .map_or_else(Vec::new, |ws| ws.zones().iter().map(|z| z.mode).collect()),
+                    windows: ws.map_or_else(Vec::new, |ws| {
+                        ws.windows()
+                            .into_iter()
+                            .filter_map(|id| {
+                                let window = Window::from_id(id);
+                                let tracked = self.windows.get(&window)?;
+                                Some(SceneWindow {
+                                    exe: tracked.exe.clone(),
+                                    class: tracked.class.clone(),
+                                    title: tracked.title.clone(),
+                                    zone: ws.zone_of(id)? + 1,
+                                    path: window.exe_path().unwrap_or_default(),
+                                })
+                            })
+                            .collect()
+                    }),
+                }
+            })
+            .collect();
+        SavedScene {
+            name: name.to_owned(),
+            auto,
+            launch,
+            monitors,
+        }
+    }
+
+    /// Applies a scene on the current desktop: layouts and zone modes of its
+    /// connected monitors, then tiled windows move to the zones the scene
+    /// has for their program. With `launch`, programs without a window are
+    /// started and land in their zone when their window appears. Returns a
+    /// short summary.
+    pub fn apply_scene(&mut self, scene: &SavedScene) -> Result<String, String> {
+        let desktop = self.current_desktop();
+        let present: Vec<usize> = (0..scene.monitors.len())
+            .filter(|&i| self.monitors.iter().any(|m| m.id == scene.monitors[i].id))
+            .collect();
+        if present.is_empty() {
+            return Err(format!(
+                "none of the monitors of scene `{}` is connected",
+                scene.name
+            ));
+        }
+        self.end_hints();
+        let mut live: Vec<Window> = self
+            .windows
+            .iter()
+            .filter(|(w, t)| {
+                t.mode == Mode::Tiled
+                    && !t.minimized
+                    && self.workspace_of(**w).is_some_and(|k| k.1 == desktop)
+            })
+            .map(|(w, _)| *w)
+            .collect();
+        // Stable order for several windows of the same program.
+        live.sort_by_key(|w| {
+            let r = w.rect();
+            (r.x, r.y, w.id())
+        });
+        let assignments = {
+            let live_props: Vec<WindowProps<'_>> =
+                live.iter().map(|w| props(&self.windows[w])).collect();
+            scene.assign(&live_props)
+        };
+
+        let (mut moved, mut launched) = (0, 0);
+        self.with_batched_apply(|wm| {
+            for &i in &present {
+                let monitor = &scene.monitors[i];
+                let key = (monitor.id.clone(), desktop.clone());
+                wm.set_layout(&key, &monitor.layout);
+                wm.workspace_mut(&key).restore_modes(&monitor.zones);
+                wm.apply(&key);
+            }
+            for a in assignments.iter().filter(|a| present.contains(&a.monitor)) {
+                let monitor = &scene.monitors[a.monitor];
+                let zone = monitor.windows[a.entry].zone.saturating_sub(1);
+                let window = live[a.window];
+                let id = window.id();
+                let key = (monitor.id.clone(), desktop.clone());
+                match wm.workspace_of(window) {
+                    Some(current) if current == key => {
+                        if wm.workspaces[&key].zone_of(id) != Some(zone)
+                            && wm.workspace_mut(&key).move_to_zone(id, zone)
+                        {
+                            moved += 1;
+                        }
+                    }
+                    Some(_) => {
+                        wm.untile(window);
+                        wm.workspace_mut(&key).insert(id, Some(zone), None);
+                        moved += 1;
+                    }
+                    None => continue,
+                }
+                wm.apply(&key);
+            }
+            if scene.launch {
+                launched = wm.launch_missing(scene, &present, &assignments);
+            }
+        });
+        tracing::info!(scene = scene.name, moved, launched, "Scene applied");
+        Ok(format!(
+            "scene `{}`: {moved} window(s) moved, {launched} program(s) started",
+            scene.name
+        ))
+    }
+
+    /// Starts the programs of scene entries that got no window; their
+    /// windows are expected for [`SCENE_LAUNCH_WAIT`].
+    fn launch_missing(
+        &mut self,
+        scene: &SavedScene,
+        present: &[usize],
+        assignments: &[tessera_core::scene::Assignment],
+    ) -> usize {
+        let until = Instant::now() + SCENE_LAUNCH_WAIT;
+        let mut launched = 0;
+        for &m in present {
+            let monitor = &scene.monitors[m];
+            for (e, entry) in monitor.windows.iter().enumerate() {
+                let assigned = assignments.iter().any(|a| a.monitor == m && a.entry == e);
+                if assigned || !can_launch(&entry.path) {
+                    continue;
+                }
+                if launched == SCENE_MAX_LAUNCHES {
+                    tracing::warn!(scene = scene.name, "Too many programs to start, stopping");
+                    return launched;
+                }
+                if let Err(e) = spawn(&entry.path, &[]) {
+                    tracing::warn!("{e}");
+                    continue;
+                }
+                launched += 1;
+                self.pending.push(PendingWindow {
+                    monitor: monitor.id.clone(),
+                    zone: entry.zone.saturating_sub(1),
+                    exe: entry.exe.clone(),
+                    class: entry.class.clone(),
+                    title: entry.title.clone(),
+                    until,
+                });
+            }
+        }
+        launched
+    }
+
+    /// Monitor and zone a scene started this window for, if any (same
+    /// program, the same title preferred). The entry is consumed.
+    fn take_pending(&mut self, window: Window) -> Option<(String, usize)> {
+        let now = Instant::now();
+        self.pending.retain(|p| p.until > now);
+        let tracked = self.windows.get(&window)?;
+        let same_program = |p: &PendingWindow| {
+            p.exe.eq_ignore_ascii_case(&tracked.exe) && p.class == tracked.class
+        };
+        let index = self
+            .pending
+            .iter()
+            .position(|p| same_program(p) && p.title == tracked.title)
+            .or_else(|| self.pending.iter().position(same_program))?;
+        let pending = self.pending.remove(index);
+        self.monitors
+            .iter()
+            .any(|m| m.id == pending.monitor)
+            .then_some((pending.monitor, pending.zone))
     }
 
     fn toggle_pause(&mut self) -> Result<(), String> {
@@ -1339,6 +2150,7 @@ impl Wm {
                     active,
                     background: appearance.zone_color,
                     highlight: appearance.zone_highlight_color,
+                    close_buttons: appearance.stack_close_button,
                 };
                 wanted.push((tabs, top, ids));
             }
@@ -1658,6 +2470,9 @@ impl Wm {
                     on_other_desktop: self.is_on_other_desktop(window),
                     rule_float: tracked.rule.is_some_and(|r| r.float),
                     rule_zone: tracked.rule.and_then(|r| r.zone),
+                    scratchpad: self
+                        .scratchpad_of(window)
+                        .map(|i| self.scratch[i].name.clone()),
                 }
             })
             .collect();
@@ -1685,6 +2500,25 @@ fn props(tracked: &Tracked) -> WindowProps<'_> {
         class: &tracked.class,
         title: &tracked.title,
     }
+}
+
+/// Starts a program detached from Tessera.
+fn spawn(program: &str, args: &[String]) -> Result<(), String> {
+    std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .map(drop)
+        .map_err(|e| format!("could not start `{program}`: {e}"))
+}
+
+/// Can a scene start the program at `path` directly? Store apps can only be
+/// started through the shell, and some windows belong to a host process.
+fn can_launch(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    !lower.is_empty()
+        && !lower.contains("\\windowsapps\\")
+        && !lower.ends_with("\\applicationframehost.exe")
+        && !lower.ends_with("\\explorer.exe")
 }
 
 /// Stack windows move down below their tab bar.

@@ -30,6 +30,8 @@ zone_color = "#303038"
 zone_highlight_color = "#3584e4"
 zone_opacity = 0.45
 stack_bar_height = 28
+# Close button on each tab above a stack (middle-click on a tab closes it too).
+stack_close_button = true
 
 [drag]
 # Key held while dragging a window to make zones appear:
@@ -48,8 +50,8 @@ modifier = "shift"
 #          toggle-float, toggle-stack, cycle-stack <next|prev>,
 #          toggle-orientation, resize <grow|shrink>, toggle-monocle,
 #          cycle-layout <next|prev>, toggle-pause, switch-desktop <n>,
-#          move-to-desktop <n>, open-editor, open-explorer, reload-config,
-#          quit
+#          move-to-desktop <n>, hint, toggle-scratchpad <n>, open-editor,
+#          open-explorer, reload-config, quit
 #
 # ⚠ marks shortcuts that override a Windows function. Delete the line
 #   to keep the Windows function. Win+L and Ctrl+Alt+Del cannot be bound.
@@ -94,6 +96,9 @@ modifier = "shift"
 "win+alt+^" = "cycle-layout next"
 "win+alt+shift+^" = "cycle-layout prev"
 "win+alt+p" = "toggle-pause"
+# Letters on every window: type one to jump there, Shift+letter swaps it
+# with the focused window, Ctrl+letter pulls it into the focused stack.
+"win+alt+w" = "hint"
 
 "win+ctrl+alt+1" = "switch-desktop 1"
 "win+ctrl+alt+2" = "switch-desktop 2"
@@ -130,3 +135,24 @@ float = true
 [[rules]]
 exe = "PowerToys.*\\.exe"
 ignore = true
+
+# Scratchpads – a window that stays minimized until its shortcut summons it
+# in front of everything, on the monitor you are working on; the same
+# shortcut hides it again. The first window matching exe/class/title (like
+# in rules) becomes the scratchpad; it always floats. If no window matches,
+# `command` is started with `args` (%VARIABLES% are expanded). Size in
+# percent of the work area,
+# position = "center" or "top"; hide_on_focus_loss hides it as soon as
+# another window gets the focus. Actions: toggle-scratchpad <n> (n-th entry).
+#
+# [[scratchpads]]
+# name = "notes"
+# exe = "notepad\\.exe"
+# title = "scratch"
+# command = "notepad.exe"
+# args = ["%USERPROFILE%\\scratch.txt"]
+# key = "win+alt+n"
+# width = 50
+# height = 60
+# position = "center"
+# hide_on_focus_loss = false

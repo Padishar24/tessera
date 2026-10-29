@@ -52,6 +52,7 @@ Logs are written to `%LOCALAPPDATA%\Tessera\logs`.
 | `Win+Alt+Plus/Minus` | Grow/shrink |
 | `Win+Alt+Space` | Monocle (window fills the zone) |
 | `Win+Alt+P` | Pause tiling on this monitor |
+| `Win+Alt+W` | Window hints: jump to any window by typing its letters (see below) |
 | `Win+Ctrl+Alt+1..4` / `+Shift` | Switch desktop / move the window there |
 | `Win+Alt+E` | Zone editor |
 | `Win+Alt+Shift+C` | Reload the configuration |
@@ -63,7 +64,9 @@ Logs are written to `%LOCALAPPDATA%\Tessera\logs`.
 - **Drag without Shift:** the window swaps places with the window under the cursor, or moves
   to another monitor.
 - **Drag an edge between two tiles:** changes the split.
-- **Click a tab above a stack:** switches the visible window.
+- **Click a tab above a stack:** switches the visible window. The **×** on a tab, or a
+  middle-click on it, closes that window (`stack_close_button = false` under `[appearance]`
+  hides the button).
 
 Windows you maximize yourself stay maximized and return to their tile when restored.
 
@@ -73,12 +76,85 @@ Windows you maximize yourself stay maximized and return to their tile when resto
   - Gaps, colors, the key that shows the zones while dragging
   - Keyboard shortcuts (`"win+alt+h" = "focus left"`)
   - Window rules (`[[rules]]` with `exe`, `class` or `title` → `ignore`, `float` or `zone`)
+  - Scratchpads (`[[scratchpads]]`, see below)
 - `layouts.toml`: layouts as a template (`columns`, `rows`, `grid`, `priority-grid`), as a
   nested split (`split`), or as free rectangles in percent (`canvas`).
 - Both files are **reloaded automatically** when you save them. If there is an error, the
   previous configuration stays active and a message appears.
 - `state.json` remembers the layout and pause state per monitor and desktop, the mode of each
   zone, and each window's zone. After a restart, windows land back in their zones.
+
+### Window hints
+
+`Win+Alt+W` (action `hint`) puts a badge with one or two letters in the middle of every
+visible window on all monitors. Type the letters to act on that window:
+
+| Typed | Effect |
+|---|---|
+| Letters | Focus the window |
+| `Shift` + letters | Swap it with the focused window (both tiled; also across zones and monitors) |
+| `Ctrl` + letters | Pull it into the focused window's stack |
+| `Backspace` | Take back a letter |
+| `Esc` or any other key | Cancel |
+
+While the badges are shown, Tessera captures the keyboard. The capture ends after 8 seconds
+without typing at the latest (the keyboard hook ends it by itself after 10 seconds).
+
+### Scratchpads
+
+A scratchpad is a window that stays minimized until its shortcut summons it, centered (or at
+the top edge) of the monitor you are working on, in front of everything. The same shortcut
+hides it again; if it is visible but behind other windows, the shortcut brings it to the
+front.
+
+```toml
+[[scratchpads]]
+name = "notes"
+exe = "notepad\\.exe"        # patterns like in [[rules]]
+title = "scratch"
+command = "notepad.exe"      # started if no window matches
+args = ["%USERPROFILE%\\scratch.txt"]
+key = "win+alt+n"
+width = 50                   # percent of the work area
+height = 60
+position = "center"          # or "top"
+hide_on_focus_loss = false   # hide it as soon as another window gets the focus
+```
+
+- The first window that matches becomes the scratchpad; further windows of the program are
+  managed as usual. A scratchpad always floats.
+- Windows that already exist when Tessera starts (or when the configuration adds the
+  scratchpad) are minimized right away. A window you start yourself, or that `command` starts,
+  is shown.
+- Hidden scratchpads stay in the taskbar; clicking them there summons them as well. Summoning
+  also brings a scratchpad over from another virtual desktop.
+- Instead of `key`, any shortcut can use the action `toggle-scratchpad <n>` (the *n*-th
+  `[[scratchpads]]` entry).
+
+### Scenes
+
+A scene is a named snapshot of the arrangement on all monitors of the current desktop: the
+layout and zone modes of each monitor and which program sits in which zone. Applying it
+restores the layouts and moves the tiled windows of those programs back into their zones.
+
+- **Tray menu → Scenes → Save for this monitor setup** saves a scene named after the connected
+  monitors that is applied **automatically** whenever exactly these monitors are connected
+  again, e.g. when you dock or undock a laptop.
+- **Tray menu → Scenes → *name*** applies a scene.
+- From the command line:
+
+  ```bash
+  tesserac scene save coding            # --auto: apply with these monitors; --launch: see below
+  tesserac scene apply coding
+  tesserac scene list
+  tesserac scene delete coding
+  ```
+
+Windows are matched by program and window class, the same title first. With `launch = true`,
+applying a scene also starts programs that have no window yet (by the path saved with the
+scene, not for Store apps); their windows land in their zones when they appear within a
+minute. Scenes are stored in `scenes.toml` next to `config.toml`, where you can also switch
+`auto` and `launch` on or off.
 
 ### File Explorer tabs
 
@@ -132,6 +208,7 @@ tesserac msg move-to-zone 2
 tesserac set-layout columns-3
 tesserac query windows
 tesserac query state
+tesserac scene list
 tesserac check-config
 tesserac desktop list
 ```

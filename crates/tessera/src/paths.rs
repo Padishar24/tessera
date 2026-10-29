@@ -41,6 +41,11 @@ pub fn state_file_for(config: &Path) -> PathBuf {
     config.with_file_name("state.json")
 }
 
+/// `scenes.toml` (saved scenes) lives next to `config.toml`.
+pub fn scenes_file_for(config: &Path) -> PathBuf {
+    config.with_file_name("scenes.toml")
+}
+
 /// Creates the default files on first start; returns the path of `config.toml`.
 /// A configuration under the former name (`%APPDATA%\TilingMgr`) is
 /// taken over first.

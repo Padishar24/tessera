@@ -1,6 +1,6 @@
 //! Tray icon with menu.
 
-use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 pub const OPEN_CONFIG: &str = "open-config";
@@ -8,10 +8,20 @@ pub const RELOAD_CONFIG: &str = "reload-config";
 pub const OPEN_EDITOR: &str = "open-editor";
 pub const OPEN_LOGS: &str = "open-logs";
 pub const AUTOSTART: &str = "autostart";
+pub const SAVE_SCENE: &str = "save-scene";
+/// Prefix of the menu items that apply a scene, followed by its name.
+pub const SCENE_PREFIX: &str = "scene:";
 pub const QUIT: &str = "quit";
 
-/// Tray icon and the autostart item (its check mark is maintained by the daemon).
-pub fn create(autostart: bool) -> anyhow::Result<(TrayIcon, CheckMenuItem)> {
+/// Tray icon and the menu entries the daemon keeps up to date.
+pub struct Tray {
+    _icon: TrayIcon,
+    /// Its check mark is maintained by the daemon.
+    pub autostart: CheckMenuItem,
+    scenes: Submenu,
+}
+
+pub fn create(autostart: bool) -> anyhow::Result<Tray> {
     let autostart = CheckMenuItem::with_id(
         MenuId::new(AUTOSTART),
         "Start with Windows",
@@ -19,9 +29,12 @@ pub fn create(autostart: bool) -> anyhow::Result<(TrayIcon, CheckMenuItem)> {
         autostart,
         None,
     );
+    let scenes = Submenu::new("Scenes", true);
     let menu = Menu::new();
     menu.append_items(&[
         &MenuItem::new(concat!("Tessera ", env!("CARGO_PKG_VERSION")), false, None),
+        &PredefinedMenuItem::separator(),
+        &scenes,
         &PredefinedMenuItem::separator(),
         &MenuItem::with_id(MenuId::new(OPEN_CONFIG), "Open configuration", true, None),
         &MenuItem::with_id(
@@ -38,13 +51,59 @@ pub fn create(autostart: bool) -> anyhow::Result<(TrayIcon, CheckMenuItem)> {
         &MenuItem::with_id(MenuId::new(QUIT), "Exit", true, None),
     ])?;
 
-    let tray = TrayIconBuilder::new()
+    let icon = TrayIconBuilder::new()
         .with_tooltip("Tessera")
         .with_icon(icon()?)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(true)
         .build()?;
-    Ok((tray, autostart))
+    let tray = Tray {
+        _icon: icon,
+        autostart,
+        scenes,
+    };
+    tray.set_scenes(&[]);
+    Ok(tray)
+}
+
+impl Tray {
+    /// Rebuilds the "Scenes" submenu: one entry per scene (name, whether it
+    /// is applied automatically), then the entry that saves the current
+    /// arrangement for this monitor setup.
+    pub fn set_scenes(&self, scenes: &[(String, bool)]) {
+        while self.scenes.remove_at(0).is_some() {}
+        let result = (|| -> tray_icon::menu::Result<()> {
+            if scenes.is_empty() {
+                self.scenes
+                    .append(&MenuItem::new("No scenes saved yet", false, None))?;
+            }
+            for (name, auto) in scenes {
+                let text = if *auto {
+                    format!("{name} (automatic)")
+                } else {
+                    name.clone()
+                };
+                // `&` would mark a mnemonic in the native menu.
+                let text = text.replace('&', "&&");
+                self.scenes.append(&MenuItem::with_id(
+                    MenuId::new(format!("{SCENE_PREFIX}{name}")),
+                    text,
+                    true,
+                    None,
+                ))?;
+            }
+            self.scenes.append(&PredefinedMenuItem::separator())?;
+            self.scenes.append(&MenuItem::with_id(
+                MenuId::new(SAVE_SCENE),
+                "Save for this monitor setup",
+                true,
+                None,
+            ))
+        })();
+        if let Err(e) = result {
+            tracing::warn!("Scene menu could not be updated: {e}");
+        }
+    }
 }
 
 /// Creates the icon at runtime: one tall tile on the left, two on the right.

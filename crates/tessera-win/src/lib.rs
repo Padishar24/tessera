@@ -3,6 +3,7 @@
 pub mod autostart;
 pub mod events;
 pub mod explorer;
+pub mod hints;
 pub mod hotkeys;
 pub mod instance;
 pub mod layered;

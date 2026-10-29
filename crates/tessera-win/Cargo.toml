@@ -14,6 +14,8 @@ thiserror.workspace = true
 tessera-core.workspace = true
 tracing.workspace = true
 winvd.workspace = true
+# Point type of Direct2D (`D2D_POINT_2F`), e.g. for `DrawLine`.
+windows-numerics = "0.3"
 # Only for the HWND type that winvd expects.
 windows_058 = { package = "windows", version = "0.58", features = ["Win32_Foundation"] }
 
@@ -35,6 +37,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Pipes",
     "Win32_System_Registry",
+    "Win32_System_SystemInformation",
     "Win32_System_RemoteDesktop",
     "Win32_System_Threading",
     "Win32_UI_Accessibility",

@@ -40,11 +40,59 @@ pub struct WindowProps<'a> {
     pub title: &'a str,
 }
 
+/// Compiled window patterns, shared by rules and scratchpads: `exe` and
+/// `class` must match completely, `title` only needs to be contained.
 #[derive(Debug, Clone)]
-struct Rule {
+pub(crate) struct Matcher {
     exe: Option<Regex>,
     class: Option<Regex>,
     title: Option<Regex>,
+}
+
+impl Matcher {
+    /// Compiles the given patterns; errors start with `context`, e.g.
+    /// `rule 3`.
+    pub(crate) fn compile(
+        context: &str,
+        exe: Option<&str>,
+        class: Option<&str>,
+        title: Option<&str>,
+        errors: &mut Vec<String>,
+    ) -> Self {
+        let mut compile = |field: &str, pattern: Option<&str>, anchored: bool| {
+            let pattern = pattern?;
+            let source = if anchored {
+                format!("^(?:{pattern})$")
+            } else {
+                pattern.to_owned()
+            };
+            match RegexBuilder::new(&source).case_insensitive(true).build() {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    errors.push(format!("{context}: invalid pattern for {field}: {e}"));
+                    None
+                }
+            }
+        };
+        Self {
+            exe: compile("exe", exe, true),
+            class: compile("class", class, true),
+            title: compile("title", title, false),
+        }
+    }
+
+    pub(crate) fn matches(&self, props: WindowProps<'_>) -> bool {
+        let matches =
+            |re: &Option<Regex>, text: &str| re.as_ref().is_none_or(|re| re.is_match(text));
+        matches(&self.exe, props.exe)
+            && matches(&self.class, props.class)
+            && matches(&self.title, props.title)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Rule {
+    matcher: Matcher,
     effect: RuleEffect,
 }
 
@@ -72,29 +120,15 @@ impl Rules {
                 continue;
             }
 
-            let mut compile = |field: &str, pattern: &Option<String>, anchored: bool| {
-                let pattern = pattern.as_deref()?;
-                let source = if anchored {
-                    format!("^(?:{pattern})$")
-                } else {
-                    pattern.to_owned()
-                };
-                match RegexBuilder::new(&source).case_insensitive(true).build() {
-                    Ok(re) => Some(re),
-                    Err(e) => {
-                        errors.push(format!("rule {n}: invalid pattern for {field}: {e}"));
-                        None
-                    }
-                }
-            };
-            let exe = compile("exe", &cfg.exe, true);
-            let class = compile("class", &cfg.class, true);
-            let title = compile("title", &cfg.title, false);
-
+            let matcher = Matcher::compile(
+                &format!("rule {n}"),
+                cfg.exe.as_deref(),
+                cfg.class.as_deref(),
+                cfg.title.as_deref(),
+                &mut errors,
+            );
             rules.push(Rule {
-                exe,
-                class,
-                title,
+                matcher,
                 effect: RuleEffect {
                     ignore: cfg.ignore,
                     float: cfg.float,
@@ -112,15 +146,9 @@ impl Rules {
 
     /// Effect of the first matching rule, otherwise `None`.
     pub fn find(&self, props: WindowProps<'_>) -> Option<RuleEffect> {
-        let matches =
-            |re: &Option<Regex>, text: &str| re.as_ref().is_none_or(|re| re.is_match(text));
         self.0
             .iter()
-            .find(|r| {
-                matches(&r.exe, props.exe)
-                    && matches(&r.class, props.class)
-                    && matches(&r.title, props.title)
-            })
+            .find(|r| r.matcher.matches(props))
             .map(|r| r.effect)
     }
 

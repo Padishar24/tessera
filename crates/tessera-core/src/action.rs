@@ -46,6 +46,10 @@ pub enum Action {
     /// Virtual desktop, 1-based.
     SwitchDesktop(u8),
     MoveToDesktop(u8),
+    /// Label every visible window with letters; typing them jumps there.
+    Hint,
+    /// Show or hide a scratchpad, 1-based position in `[[scratchpads]]`.
+    ToggleScratchpad(u8),
     OpenEditor,
     /// New tab in the topmost File Explorer window, otherwise a new window.
     OpenExplorer,
@@ -138,6 +142,8 @@ impl FromStr for Action {
             "toggle-pause" => none(Action::TogglePause),
             "switch-desktop" => Ok(Action::SwitchDesktop(number()?)),
             "move-to-desktop" => Ok(Action::MoveToDesktop(number()?)),
+            "hint" => none(Action::Hint),
+            "toggle-scratchpad" => Ok(Action::ToggleScratchpad(number()?)),
             "open-editor" => none(Action::OpenEditor),
             "open-explorer" => none(Action::OpenExplorer),
             "reload-config" => none(Action::ReloadConfig),
@@ -185,6 +191,8 @@ impl fmt::Display for Action {
             Action::TogglePause => f.write_str("toggle-pause"),
             Action::SwitchDesktop(n) => write!(f, "switch-desktop {n}"),
             Action::MoveToDesktop(n) => write!(f, "move-to-desktop {n}"),
+            Action::Hint => f.write_str("hint"),
+            Action::ToggleScratchpad(n) => write!(f, "toggle-scratchpad {n}"),
             Action::OpenEditor => f.write_str("open-editor"),
             Action::OpenExplorer => f.write_str("open-explorer"),
             Action::ReloadConfig => f.write_str("reload-config"),
@@ -210,6 +218,8 @@ mod tests {
             "cycle-layout next",
             "switch-desktop 2",
             "move-to-desktop 9",
+            "hint",
+            "toggle-scratchpad 2",
             "open-explorer",
             "quit",
         ] {

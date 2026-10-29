@@ -44,6 +44,11 @@ enum Command {
         /// File to check (default: %APPDATA%\Tessera\config.toml).
         path: Option<PathBuf>,
     },
+    /// Save, apply, list or delete scenes (arrangements of all monitors).
+    Scene {
+        #[command(subcommand)]
+        command: SceneCommand,
+    },
     /// List, create or remove virtual desktops.
     Desktop {
         #[command(subcommand)]
@@ -53,6 +58,27 @@ enum Command {
     VdeskProbe,
     /// Show the locations of configuration and logs.
     Paths,
+}
+
+#[derive(Subcommand)]
+enum SceneCommand {
+    /// Save the current arrangement (replaces a scene with the same name).
+    Save {
+        name: String,
+        /// Apply it automatically whenever exactly these monitors are
+        /// connected.
+        #[arg(long)]
+        auto: bool,
+        /// When applying it, start programs that have no window yet.
+        #[arg(long)]
+        launch: bool,
+    },
+    /// Apply a saved scene on the current desktop.
+    Apply { name: String },
+    /// Show all saved scenes.
+    List,
+    /// Delete a saved scene.
+    Delete { name: String },
 }
 
 #[derive(Subcommand)]
@@ -84,6 +110,7 @@ fn main() -> ExitCode {
         Command::Query { what } => query(what),
         Command::SetLayout { layout, monitor } => set_layout(layout, monitor),
         Command::CheckConfig { path } => check_config(path),
+        Command::Scene { command } => scene(command),
         Command::VdeskProbe
         | Command::Desktop {
             command: DesktopCommand::List,
@@ -130,6 +157,53 @@ fn msg(action: &str) -> ExitCode {
             eprintln!("{message}");
             ExitCode::FAILURE
         }
+        Some(Response::State(_) | Response::Scenes { .. }) | None => ExitCode::FAILURE,
+    }
+}
+
+fn scene(command: SceneCommand) -> ExitCode {
+    let request = match command {
+        SceneCommand::Save { name, auto, launch } => Request::SaveScene { name, auto, launch },
+        SceneCommand::Apply { name } => Request::ApplyScene { name },
+        SceneCommand::Delete { name } => Request::DeleteScene { name },
+        SceneCommand::List => Request::ListScenes,
+    };
+    match send(&request) {
+        Some(Response::Ok) => ExitCode::SUCCESS,
+        Some(Response::Scenes { scenes }) => {
+            if scenes.is_empty() {
+                println!("No scenes saved yet. Save one with `tesserac scene save <name>`.");
+            }
+            for s in &scenes {
+                let mut flags = Vec::new();
+                if s.auto {
+                    flags.push("auto");
+                }
+                if s.launch {
+                    flags.push("launch");
+                }
+                println!(
+                    "{} {}{}\n   {} window(s) on {}",
+                    if s.current_monitors { "*" } else { " " },
+                    s.name,
+                    if flags.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  ({})", flags.join(", "))
+                    },
+                    s.windows,
+                    s.monitors.join(" + "),
+                );
+            }
+            if scenes.iter().any(|s| s.current_monitors) {
+                println!("\n* = made for the monitors connected now");
+            }
+            ExitCode::SUCCESS
+        }
+        Some(Response::Error { message }) => {
+            eprintln!("{message}");
+            ExitCode::FAILURE
+        }
         Some(Response::State(_)) | None => ExitCode::FAILURE,
     }
 }
@@ -165,7 +239,7 @@ fn query(what: QueryKind) -> ExitCode {
             eprintln!("{message}");
             return ExitCode::FAILURE;
         }
-        Some(Response::Ok) | None => return ExitCode::FAILURE,
+        Some(Response::Ok | Response::Scenes { .. }) | None => return ExitCode::FAILURE,
     };
     match what {
         QueryKind::State => println!(
@@ -197,6 +271,9 @@ fn print_windows(state: &StateSnapshot) {
         if w.rule_float {
             flags.push('~');
         }
+        if w.scratchpad.is_some() {
+            flags.push('S');
+        }
         if !w.resizable {
             flags.push('#');
         }
@@ -220,7 +297,7 @@ fn print_windows(state: &StateSnapshot) {
         );
     }
     println!(
-        "\n{} windows. Flags: F=foreground T=tiled D=other desktop ~=rule float #=fixed size m=minimized M=maximized",
+        "\n{} windows. Flags: F=foreground T=tiled D=other desktop ~=rule float S=scratchpad #=fixed size m=minimized M=maximized",
         state.windows.len()
     );
 }
