@@ -87,7 +87,8 @@ jobs:
           Copy-Item metadata/sbom-${{ matrix.arch }}.cdx.json "$name/sbom.cdx.json"
           Compress-Archive -Path "$name/*" -DestinationPath "$name.zip"
           $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+          # LF line ending, so `sha256sum -c` works on Linux and Git Bash too.
+          [IO.File]::WriteAllText("$PWD/$name.zip.sha256", "$hash  $name.zip`n")
       - uses: actions/upload-artifact@v7
         with:
           name: tessera-${{ matrix.arch }}
