@@ -20,4 +20,4 @@ download really comes from this repository:
 gh attestation verify tessera-vX.Y.Z-x64.zip --repo Padishar24/tessera
 ```
 
-Attestations exist from v0.9.24 on. Each zip also has a `.sha256` file next to it in the release.
+Attestations exist from v1.0.24 on. Each zip also has a `.sha256` file next to it in the release.

@@ -3496,7 +3496,7 @@ dependencies = [
 
 [[package]]
 name = "tessera"
-version = "0.9.24"
+version = "1.0.24"
 dependencies = [
  "anyhow",
  "clap",
@@ -3515,7 +3515,7 @@ dependencies = [
 
 [[package]]
 name = "tessera-core"
-version = "0.9.24"
+version = "1.0.24"
 dependencies = [
  "regex",
  "serde",
@@ -3526,7 +3526,7 @@ dependencies = [
 
 [[package]]
 name = "tessera-editor"
-version = "0.9.24"
+version = "1.0.24"
 dependencies = [
  "anyhow",
  "eframe",
@@ -3539,7 +3539,7 @@ dependencies = [
 
 [[package]]
 name = "tessera-win"
-version = "0.9.24"
+version = "1.0.24"
 dependencies = [
  "anyhow",
  "serde_json",
