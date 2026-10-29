@@ -1,0 +1,121 @@
+# On every `v*` tag, builds the release zips (x64 and ARM64), attests their
+# provenance and attaches them to a GitHub release. The tag must match the
+# version in Cargo.toml; tests and cargo-deny (ci.yml) run first.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Only the last job, which runs no third-party actions, gets write access.
+# Release jobs build without a cache, so a poisoned cache entry cannot end up in a zip.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check tag against Cargo.toml
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # License notices and SBOMs for the zips. Runs read-only, because installing the
+  # tools compiles third-party code.
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install tools
+        run: |
+          cargo install --locked cargo-about@0.9.3 --features cli
+          cargo install --locked cargo-cyclonedx@0.5.9
+      - name: Generate
+        run: |
+          mkdir metadata
+          cargo about generate about.hbs --locked -o metadata/THIRD_PARTY_LICENSES.html
+          for t in x64:x86_64-pc-windows-msvc arm64:aarch64-pc-windows-msvc; do
+            cargo cyclonedx --manifest-path crates/tessera/Cargo.toml --format json \
+              --spec-version 1.5 --no-build-deps --target "${t#*:}" --override-filename sbom
+            mv crates/tessera/sbom.json "metadata/sbom-${t%%:*}.cdx.json"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: metadata
+          path: metadata/
+          if-no-files-found: error
+
+  build:
+    needs: [check-tag, ci, metadata]
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: metadata
+          path: metadata
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "tessera-$env:GITHUB_REF_NAME-${{ matrix.arch }}"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/tessera.exe, target/${{ matrix.target }}/release/tesserac.exe, README.md, LICENSE, metadata/THIRD_PARTY_LICENSES.html $name
+          Copy-Item metadata/sbom-${{ matrix.arch }}.cdx.json "$name/sbom.cdx.json"
+          Compress-Archive -Path "$name/*" -DestinationPath "$name.zip"
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "$name.zip.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tessera-${{ matrix.arch }}
+          path: tessera-*.zip*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: tessera-*
+          path: dist
+          merge-multiple: true
+      # Verify with: gh attestation verify <zip> --repo Padishar24/tessera
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.zip
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Tessera $GITHUB_REF_NAME" \
+            --generate-notes

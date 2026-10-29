@@ -1,0 +1,47 @@
+# Tessera – zone layouts
+#
+# Located at %APPDATA%\Tessera\layouts.toml. Each zone is its own
+# tiling tree: multiple windows in one zone are tiled automatically.
+# Win+Alt+^ cycles through these layouts in order.
+#
+# Each [[layout]] needs a unique name and exactly one of:
+#
+#   template = "single" | "columns" | "rows" | "grid" | "priority-grid"
+#   zones    = <count>                        (only together with template)
+#
+#   split = { orientation = "horizontal" | "vertical", sizes = [..], children = [..] }
+#       Recursive split with relative sizes. A child without sizes ({}) is a zone.
+#
+#   canvas = [[x, y, width, height], ...]
+#       Floating zones in percent of the work area, may overlap.
+#
+# The gap between zones is gaps.inner from config.toml.
+
+[[layout]]
+name = "single"
+template = "single"
+
+[[layout]]
+name = "columns-2"
+template = "columns"
+zones = 2
+
+[[layout]]
+name = "columns-3"
+template = "columns"
+zones = 3
+
+[[layout]]
+name = "focus-center"
+template = "priority-grid"
+zones = 3
+
+[[layout]]
+name = "grid-4"
+template = "grid"
+zones = 4
+
+[[layout]]
+name = "focus-left"
+# Left 2/3, right two zones stacked vertically.
+split = { orientation = "horizontal", sizes = [2, 1], children = [{}, { orientation = "vertical", sizes = [1, 1] }] }

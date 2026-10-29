@@ -1,0 +1,4 @@
+#define FILE_DESCRIPTION "Tessera - Command Line"
+#define INTERNAL_NAME "tesserac"
+#define ORIGINAL_FILENAME "tesserac.exe"
+#include "common.rc2"

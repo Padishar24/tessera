@@ -1,0 +1,20 @@
+[package]
+name = "tessera-editor"
+description = "Graphical zone editor for Tessera"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+eframe.workspace = true
+raw-window-handle = "0.6"
+tessera-core.workspace = true
+tessera-win.workspace = true
+toml_edit.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

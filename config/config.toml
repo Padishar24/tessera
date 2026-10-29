@@ -1,0 +1,132 @@
+# Tessera – configuration
+#
+# Located at %APPDATA%\Tessera\config.toml. After making changes, choose
+# "Reload configuration" in the tray menu (or press Win+Alt+Shift+C).
+# Check without restarting:  tesserac check-config
+
+[general]
+# Tile new windows automatically.
+auto_tile = true
+# Layout for monitors without their own assignment ("single" = the whole monitor is one zone).
+default_layout = "single"
+# Fixed-size windows (e.g. dialogs) float automatically.
+float_fixed_size = true
+# On exit, restore tiled windows to their original size.
+restore_on_exit = true
+# ⚠ Win+E opens a new tab in the existing File Explorer window (restoring it
+# if minimized) instead of a new window. A binding for win+e below takes precedence.
+explorer_tabs = false
+
+[gaps]
+# Gaps in logical pixels.
+inner = 8
+outer = 8
+
+[appearance]
+# Color the border of the active window (Windows 11 only).
+active_border = true
+active_border_color = "#62a0ea"
+zone_color = "#303038"
+zone_highlight_color = "#3584e4"
+zone_opacity = 0.45
+stack_bar_height = 28
+
+[drag]
+# Key held while dragging a window to make zones appear:
+# "shift", "ctrl", "alt" or "always".
+modifier = "shift"
+
+# Shortcuts: "<modifier>+...+<key>" = "<action>"
+#
+# Modifiers: win, ctrl, alt, shift
+# Keys:      a–z, 0–9, f1–f24, numpad0–numpad9, left, right, up, down, space,
+#            tab, enter, escape, backspace, insert, delete, home, end, pageup,
+#            pagedown, plus, minus, comma, period, oem1–oem8, oem102 or a
+#            single character like ^ (resolved via the current keyboard layout)
+#
+# Actions: focus|move|swap <left|right|up|down>, move-to-zone <n>,
+#          toggle-float, toggle-stack, cycle-stack <next|prev>,
+#          toggle-orientation, resize <grow|shrink>, toggle-monocle,
+#          cycle-layout <next|prev>, toggle-pause, switch-desktop <n>,
+#          move-to-desktop <n>, open-editor, open-explorer, reload-config,
+#          quit
+#
+# ⚠ marks shortcuts that override a Windows function. Delete the line
+#   to keep the Windows function. Win+L and Ctrl+Alt+Del cannot be bound.
+[keybindings]
+"win+alt+h" = "focus left"
+"win+alt+j" = "focus down"
+"win+alt+k" = "focus up"               # ⚠ Mute microphone (Teams)
+"win+alt+l" = "focus right"
+"win+alt+left" = "focus left"
+"win+alt+down" = "focus down"           # ⚠ Snap bottom half
+"win+alt+up" = "focus up"               # ⚠ Snap top half
+"win+alt+right" = "focus right"
+
+"win+alt+shift+h" = "move left"
+"win+alt+shift+j" = "move down"
+"win+alt+shift+k" = "move up"
+"win+alt+shift+l" = "move right"
+"win+alt+shift+left" = "move left"
+"win+alt+shift+down" = "move down"
+"win+alt+shift+up" = "move up"
+"win+alt+shift+right" = "move right"
+
+# ⚠ Win+Alt+number otherwise opens the jump list of the n-th taskbar app.
+"win+alt+1" = "move-to-zone 1"
+"win+alt+2" = "move-to-zone 2"
+"win+alt+3" = "move-to-zone 3"
+"win+alt+4" = "move-to-zone 4"
+"win+alt+5" = "move-to-zone 5"
+"win+alt+6" = "move-to-zone 6"
+"win+alt+7" = "move-to-zone 7"
+"win+alt+8" = "move-to-zone 8"
+"win+alt+9" = "move-to-zone 9"
+
+"win+alt+f" = "toggle-float"
+"win+alt+s" = "toggle-stack"
+"win+alt+tab" = "cycle-stack next"
+"win+alt+shift+tab" = "cycle-stack prev"
+"win+alt+o" = "toggle-orientation"
+"win+alt+plus" = "resize grow"
+"win+alt+minus" = "resize shrink"
+"win+alt+space" = "toggle-monocle"
+"win+alt+^" = "cycle-layout next"
+"win+alt+shift+^" = "cycle-layout prev"
+"win+alt+p" = "toggle-pause"
+
+"win+ctrl+alt+1" = "switch-desktop 1"
+"win+ctrl+alt+2" = "switch-desktop 2"
+"win+ctrl+alt+3" = "switch-desktop 3"
+"win+ctrl+alt+4" = "switch-desktop 4"
+"win+ctrl+alt+shift+1" = "move-to-desktop 1"
+"win+ctrl+alt+shift+2" = "move-to-desktop 2"
+"win+ctrl+alt+shift+3" = "move-to-desktop 3"
+"win+ctrl+alt+shift+4" = "move-to-desktop 4"
+
+"win+alt+e" = "open-editor"
+"win+alt+shift+c" = "reload-config"
+
+# Window rules – the first matching rule applies.
+# exe and class must match completely, title only needs to be contained
+# (regular expressions, case-insensitive).
+# Effect: ignore = true | float = true | zone = <n>
+
+[[rules]]
+# Standard dialogs (Save As, Properties, ...)
+class = "#32770"
+float = true
+
+[[rules]]
+# Explorer copy/move progress
+exe = "explorer\\.exe"
+class = "OperationStatusWindow"
+float = true
+
+[[rules]]
+title = "Bild im Bild|Picture[- ]in[- ]Picture"
+float = true
+
+[[rules]]
+exe = "PowerToys.*\\.exe"
+ignore = true

@@ -1,0 +1,4 @@
+#define FILE_DESCRIPTION "Tessera - Window Tiling Manager"
+#define INTERNAL_NAME "tessera"
+#define ORIGINAL_FILENAME "tessera.exe"
+#include "common.rc2"

@@ -1,0 +1,7 @@
+# Link the C runtime statically: the programs then run even without the
+# Visual C++ Redistributable (vcruntime140.dll) installed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

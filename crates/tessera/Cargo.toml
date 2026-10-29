@@ -1,0 +1,36 @@
+[package]
+name = "tessera"
+description = "Tessera – Window Tiling Manager (zones + auto-tiling) for Windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "tessera"
+path = "src/main.rs"
+
+[[bin]]
+name = "tesserac"
+path = "src/bin/tesserac.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dirs.workspace = true
+notify.workspace = true
+serde_json.workspace = true
+tessera-core.workspace = true
+tessera-editor.workspace = true
+tessera-win.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+tray-icon.workspace = true
+
+[build-dependencies]
+embed-resource.workspace = true
+
+[lints]
+workspace = true

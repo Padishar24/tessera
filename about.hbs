@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tessera – third-party licenses</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h2 { margin-top: 2.5rem; border-bottom: 1px solid #ccc; }
+  pre { white-space: pre-wrap; background: #f6f6f6; padding: 1rem; font-size: 0.85rem; }
+  li { margin: 0.1rem 0; }
+</style>
+</head>
+<body>
+<h1>Third-party licenses</h1>
+<p>Tessera is MIT-licensed and includes the following open-source components.</p>
+
+<h2>Overview</h2>
+<ul>
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+
+{{#each licenses}}
+<h2 id="{{id}}">{{name}}</h2>
+<p>Used by:</p>
+<ul>
+{{#each used_by}}
+  <li>{{crate.name}} {{crate.version}}</li>
+{{/each}}
+</ul>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

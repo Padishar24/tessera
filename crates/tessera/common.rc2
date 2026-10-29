@@ -1,0 +1,37 @@
+// Resources shared by both programs; included by tessera.rc and tesserac.rc.
+// VER_* come from build.rs (version from Cargo.toml).
+#include <winver.h>
+
+// 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST
+1 24 "tessera.exe.manifest"
+
+// Explorer uses the icon with the lowest ID.
+1 ICON "tessera.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
+ PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", FILE_DESCRIPTION
+            VALUE "FileVersion", VER_STRING
+            VALUE "InternalName", INTERNAL_NAME
+            VALUE "LegalCopyright", "Copyright (c) 2026 Burkhard Zeiner, MIT License"
+            VALUE "OriginalFilename", ORIGINAL_FILENAME
+            VALUE "ProductName", "Tessera"
+            VALUE "ProductVersion", VER_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
