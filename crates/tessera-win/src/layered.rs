@@ -8,12 +8,13 @@ use tessera_core::config::Color;
 use tessera_core::geometry::Rect;
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
+    D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
-    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
-    D2D1_ROUNDED_RECT, D2D1CreateFactory, ID2D1DCRenderTarget, ID2D1Factory, ID2D1RenderTarget,
+    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_BITMAP_PROPERTIES, D2D1_DRAW_TEXT_OPTIONS_CLIP,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
+    D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE, D2D1_ROUNDED_RECT,
+    D2D1CreateFactory, ID2D1Bitmap, ID2D1DCRenderTarget, ID2D1Factory, ID2D1RenderTarget,
     ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::DirectWrite::{
@@ -176,6 +177,9 @@ impl LayeredWindow {
     }
 
     /// Draws with `draw` and shows the window at `rect` (screen coordinates).
+    ///
+    /// After an error the render target is recreated; bitmaps kept from
+    /// [`Painter::bitmap`] belong to the old one and must be dropped.
     pub fn present(
         &mut self,
         rect: Rect,
@@ -439,6 +443,48 @@ impl Painter<'_> {
                 .DrawLine(point(from), point(to), &brush, width, None)
         };
         Ok(())
+    }
+
+    /// Bitmap from premultiplied BGRA pixels (top-down). Only valid with this
+    /// window's render target, see [`LayeredWindow::present`].
+    pub fn bitmap(
+        &self,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> windows::core::Result<ID2D1Bitmap> {
+        let props = D2D1_BITMAP_PROPERTIES {
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+        };
+        debug_assert_eq!(pixels.len(), width as usize * height as usize * 4);
+        // SAFETY: `pixels` holds `height` lines of `width` 32-bit pixels.
+        unsafe {
+            self.target.CreateBitmap(
+                D2D_SIZE_U { width, height },
+                Some(pixels.as_ptr().cast()),
+                width * 4,
+                &props,
+            )
+        }
+    }
+
+    /// `bitmap` scaled into `r`.
+    pub fn image(&self, bitmap: &ID2D1Bitmap, r: Rect, alpha: f32) {
+        // SAFETY: inside BeginDraw/EndDraw.
+        unsafe {
+            self.target.DrawBitmap(
+                bitmap,
+                Some(&self.rect(r, 0.0)),
+                alpha,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                None,
+            );
+        }
     }
 
     /// Text in `r`, clipped to the rectangle.

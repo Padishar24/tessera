@@ -2147,6 +2147,7 @@ impl Wm {
                     rect: Rect::new(first.rect.x, first.rect.y, first.rect.width, bar_height),
                     dpi: monitor.dpi,
                     titles,
+                    windows: ids.iter().map(|id| Window::from_id(*id)).collect(),
                     active,
                     background: appearance.zone_color,
                     highlight: appearance.zone_highlight_color,

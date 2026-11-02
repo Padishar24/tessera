@@ -1,10 +1,13 @@
-//! Tab bar above a stack: shows the titles of the stacked windows and a
-//! close button on each tab; a click on a tab reaches the daemon as
+//! Tab bar above a stack: shows the icons and titles of the stacked windows
+//! and a close button on each tab; a click on a tab reaches the daemon as
 //! [`Event::TabClicked`].
 
+use std::collections::HashMap;
+
 use tessera_core::config::Color;
-use tessera_core::geometry::Rect;
+use tessera_core::geometry::{Rect, scale_px};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Direct2D::ID2D1Bitmap;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
 };
@@ -16,6 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use crate::events::{self, Event};
+use crate::icon;
 use crate::layered::{LayeredWindow, Options};
 use crate::window::Window;
 
@@ -26,6 +30,8 @@ pub struct Tabs {
     pub rect: Rect,
     pub dpi: u32,
     pub titles: Vec<String>,
+    /// Window of each tab, in the order of `titles`; source of the icons.
+    pub windows: Vec<Window>,
     pub active: usize,
     pub background: Color,
     pub highlight: Color,
@@ -82,6 +88,9 @@ impl Tabs {
 pub struct TabBar {
     window: LayeredWindow,
     shown: Option<Tabs>,
+    /// Icons per window and size in px, fetched once (`None`: the window has
+    /// none). The bitmaps belong to the render target of `window`.
+    icons: HashMap<(Window, i32), Option<ID2D1Bitmap>>,
 }
 
 impl TabBar {
@@ -97,6 +106,7 @@ impl TabBar {
                 user_data: id as isize,
             })?,
             shown: None,
+            icons: HashMap::new(),
         })
     }
 
@@ -132,7 +142,28 @@ impl TabBar {
         let inset = (2.0 * scale).max(1.0) as i32;
         let radius = 6.0 * scale;
         let white = Color::rgb(255, 255, 255);
-        self.window.present(tabs.rect, |p| {
+        let icon_size = scale_px(16, tabs.dpi);
+        let icon_gap = scale_px(6, tabs.dpi);
+
+        // Fetched before drawing, so a slow application doesn't hold up the
+        // render target.
+        self.icons
+            .retain(|(w, size), _| *size == icon_size && tabs.windows.contains(w));
+        let fetched: Vec<_> = tabs
+            .windows
+            .iter()
+            .filter(|w| !self.icons.contains_key(&(**w, icon_size)))
+            .map(|w| (*w, icon::load(*w, icon_size as u32, tabs.dpi)))
+            .collect();
+
+        let icons = &mut self.icons;
+        let result = self.window.present(tabs.rect, |p| {
+            for (window, icon) in fetched {
+                let bitmap = icon
+                    .map(|i| p.bitmap(i.width, i.height, &i.pixels))
+                    .transpose()?;
+                icons.insert((window, icon_size), bitmap);
+            }
             // Opaque background: fully transparent pixels would be click-through.
             p.fill(tabs.rect, tabs.background, 0.92, radius)?;
             for (i, title) in tabs.titles.iter().enumerate() {
@@ -149,17 +180,22 @@ impl TabBar {
                 }
                 let close = tabs.close_rect(i);
                 let text_right = close.map_or(tab.right() - padding, |c| c.x);
-                let text = Rect::new(
-                    tab.x + padding,
-                    tab.y,
-                    text_right - tab.x - padding,
-                    tab.height,
-                );
                 let (format, alpha) = if active {
                     (&bold, 1.0)
                 } else {
                     (&normal, 0.75)
                 };
+                let mut text_left = tab.x + padding;
+                let icon = tabs
+                    .windows
+                    .get(i)
+                    .and_then(|w| icons.get(&(*w, icon_size))?.as_ref());
+                if let Some(bitmap) = icon.filter(|_| text_right - text_left >= icon_size) {
+                    let y = tab.y + (tab.height - icon_size) / 2;
+                    p.image(bitmap, Rect::new(text_left, y, icon_size, icon_size), alpha);
+                    text_left += icon_size + icon_gap;
+                }
+                let text = Rect::new(text_left, tab.y, text_right - text_left, tab.height);
                 p.text(title, text, format, white, alpha)?;
                 if let Some(c) = close {
                     // A small "x" in the middle of the button.
@@ -185,7 +221,12 @@ impl TabBar {
                 }
             }
             Ok(())
-        })
+        });
+        if result.is_err() {
+            // The render target gets recreated; the icons were made for the old one.
+            self.icons.clear();
+        }
+        result
     }
 
     /// Z-order: directly above the active stack window, so the bar is
@@ -244,6 +285,7 @@ mod tests {
             rect: Rect::new(100, 50, width, 28),
             dpi: 96,
             titles: vec![String::new(); count],
+            windows: Vec::new(),
             active: 0,
             background: Color::rgb(0, 0, 0),
             highlight: Color::rgb(0, 0, 0),
