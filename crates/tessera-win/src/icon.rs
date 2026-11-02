@@ -134,7 +134,7 @@ fn pixels(color: HBITMAP, mask: HBITMAP) -> Option<Icon> {
     }
     let mut bgra = dib_bits(color, width, height)?;
     // Without an alpha channel the transparency is in the AND mask.
-    let mask = if bgra.chunks_exact(4).all(|p| p[3] == 0) {
+    let mask = if bgra.as_chunks::<4>().0.iter().all(|p| p[3] == 0) {
         Some(dib_bits(mask, width, height)?)
     } else {
         None
@@ -185,7 +185,7 @@ fn dib_bits(bitmap: HBITMAP, width: i32, height: i32) -> Option<Vec<u8>> {
 /// Straight to premultiplied alpha; with `mask`, the alpha comes from there
 /// (black = opaque).
 fn premultiply(bgra: &mut [u8], mask: Option<&[u8]>) {
-    for (i, pixel) in bgra.chunks_exact_mut(4).enumerate() {
+    for (i, pixel) in bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         if let Some(mask) = mask {
             pixel[3] = if mask[i * 4] == 0 { 255 } else { 0 };
         }
