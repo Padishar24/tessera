@@ -190,7 +190,8 @@ struct BarSlot {
 /// Ongoing mouse move or resize operation.
 struct Drag {
     window: Window,
-    /// Rect at the start; if the size changes, it is a resize.
+    /// Rect at the start; if the size changes with edges kept in place, it is
+    /// a resize.
     start: Rect,
     resizing: bool,
 }
@@ -963,7 +964,10 @@ impl Wm {
         let window = drag.window;
         if !drag.resizing {
             let now = window.rect();
-            drag.resizing = (now.width, now.height) != (drag.start.width, drag.start.height);
+            drag.resizing = now.is_resized_from(&drag.start);
+            if drag.resizing {
+                tracing::debug!(start = ?drag.start, ?now, "Drag is a resize");
+            }
         }
         let target = if drag.resizing {
             None

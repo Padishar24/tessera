@@ -65,6 +65,16 @@ impl Rect {
             i64::from(self.width) * i64::from(self.height)
         }
     }
+
+    /// Whether `self` came from `start` by dragging an edge or corner: the
+    /// size changed while the opposite edges stayed in place. A move that
+    /// changes the size on the way (Windows rescales a window that crosses
+    /// onto a monitor with a different DPI) shifts all four edges.
+    pub const fn is_resized_from(&self, start: &Rect) -> bool {
+        (self.width != start.width || self.height != start.height)
+            && (self.x == start.x || self.right() == start.right())
+            && (self.y == start.y || self.bottom() == start.bottom())
+    }
 }
 
 /// Scales `px` logical pixels (relative to 96 DPI) to physical pixels at
@@ -114,5 +124,21 @@ mod tests {
         assert_eq!(a.intersection(&b).area(), 1000);
         assert!(a.intersection(&Rect::new(100, 0, 10, 10)).is_empty());
         assert_eq!(Rect::new(0, 0, -5, 10).area(), 0);
+    }
+
+    #[test]
+    fn resize_vs_move() {
+        let start = Rect::new(1000, 200, 800, 600);
+        // Pure move.
+        assert!(!Rect::new(1500, 300, 800, 600).is_resized_from(&start));
+        // Move onto a 125 % monitor: rescaled around the grab point (1100, 210).
+        let rescaled = Rect::from_ltrb(3415, 197, 4415, 947);
+        assert!(!rescaled.is_resized_from(&start));
+        // Right edge, top-left corner and bottom-right corner dragged.
+        assert!(Rect::new(1000, 200, 900, 600).is_resized_from(&start));
+        assert!(Rect::from_ltrb(900, 100, 1800, 800).is_resized_from(&start));
+        assert!(Rect::new(1000, 200, 900, 700).is_resized_from(&start));
+        // Unchanged.
+        assert!(!start.is_resized_from(&start));
     }
 }
