@@ -150,11 +150,12 @@ restores the layouts and moves the tiled windows of those programs back into the
   tesserac scene delete coding
   ```
 
-Windows are matched by program and window class, the same title first. With `launch = true`,
-applying a scene also starts programs that have no window yet (by the path saved with the
-scene, not for Store apps); their windows land in their zones when they appear within a
-minute. Scenes are stored in `scenes.toml` next to `config.toml`, where you can also switch
-`auto` and `launch` on or off.
+Windows are matched by program and window class; window titles are not saved. A scene saved
+with `--launch` also starts programs that have no window yet when it is applied (not Store
+apps); their windows land in their zones when they appear within a minute. Only such scenes
+save the full paths of the programs, which starting them needs. Scenes are stored in
+`scenes.toml` next to `config.toml`, where you can also switch `auto` on or off, and `launch`
+off.
 
 ### File Explorer tabs
 

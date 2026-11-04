@@ -51,7 +51,9 @@ const SCENES_HEADER: &str = "\
 # `tesserac scene save <name>`); comments in this file are not kept.
 # Per scene you can change:
 #   auto   = true   apply it whenever exactly its monitors are connected
-#   launch = true   when applying, start programs that have no window yet
+#   launch = true   when applying, start programs that have no window yet;
+#                   needs the program paths, which are only saved with
+#                   `tesserac scene save <name> --launch`
 #   zone            zone (1-based) of a window on its monitor
 ";
 
@@ -202,6 +204,7 @@ pub fn run(config_override: Option<PathBuf>) -> anyhow::Result<()> {
     let state = daemon.load_state();
     daemon.wm.restore_state(state);
     daemon.wm.adopt_existing(window::enumerate());
+    daemon.clean_scenes();
     daemon.refresh_scene_menu();
 
     tracing::info!(
@@ -340,6 +343,28 @@ impl Daemon {
             Ok(text) => Scenes::parse(&text).with_context(|| path.display().to_string()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Scenes::default()),
             Err(e) => Err(e).with_context(|| path.display().to_string()),
+        }
+    }
+
+    /// Writes `scenes.toml` again if it still contains the window titles
+    /// that older versions saved, or program paths of scenes without
+    /// `launch`: they can contain sensitive data.
+    fn clean_scenes(&mut self) {
+        let path = paths::scenes_file_for(&self.config_path);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        // A file that does not parse is reported when it is loaded.
+        let Ok(mut scenes) = Scenes::parse(&text) else {
+            return;
+        };
+        let dropped_paths = scenes.drop_unused_paths();
+        if !dropped_paths && !Scenes::has_window_titles(&text) {
+            return;
+        }
+        match self.write_scenes(&scenes) {
+            Ok(()) => tracing::info!("Removed sensitive data from {}", path.display()),
+            Err(e) => tracing::warn!("{e:#}"),
         }
     }
 

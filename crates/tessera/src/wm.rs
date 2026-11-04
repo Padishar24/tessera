@@ -96,7 +96,6 @@ struct PendingWindow {
     zone: usize,
     exe: String,
     class: String,
-    title: String,
     until: Instant,
 }
 
@@ -1836,9 +1835,13 @@ impl Wm {
                                 Some(SceneWindow {
                                     exe: tracked.exe.clone(),
                                     class: tracked.class.clone(),
-                                    title: tracked.title.clone(),
                                     zone: ws.zone_of(id)? + 1,
-                                    path: window.exe_path().unwrap_or_default(),
+                                    // Only starting programs needs the path.
+                                    path: if launch {
+                                        window.exe_path().unwrap_or_default()
+                                    } else {
+                                        String::new()
+                                    },
                                 })
                             })
                             .collect()
@@ -1966,7 +1969,6 @@ impl Wm {
                     zone: entry.zone.saturating_sub(1),
                     exe: entry.exe.clone(),
                     class: entry.class.clone(),
-                    title: entry.title.clone(),
                     until,
                 });
             }
@@ -1975,19 +1977,15 @@ impl Wm {
     }
 
     /// Monitor and zone a scene started this window for, if any (same
-    /// program, the same title preferred). The entry is consumed.
+    /// program). The entry is consumed.
     fn take_pending(&mut self, window: Window) -> Option<(String, usize)> {
         let now = Instant::now();
         self.pending.retain(|p| p.until > now);
         let tracked = self.windows.get(&window)?;
-        let same_program = |p: &PendingWindow| {
-            p.exe.eq_ignore_ascii_case(&tracked.exe) && p.class == tracked.class
-        };
         let index = self
             .pending
             .iter()
-            .position(|p| same_program(p) && p.title == tracked.title)
-            .or_else(|| self.pending.iter().position(same_program))?;
+            .position(|p| p.exe.eq_ignore_ascii_case(&tracked.exe) && p.class == tracked.class)?;
         let pending = self.pending.remove(index);
         self.monitors
             .iter()

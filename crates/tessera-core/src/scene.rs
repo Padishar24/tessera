@@ -46,10 +46,10 @@ pub struct SceneMonitor {
 pub struct SceneWindow {
     pub exe: String,
     pub class: String,
-    pub title: String,
     /// Zone, 1-based as shown to the user.
     pub zone: usize,
-    /// Full path of the executable, used to start the program.
+    /// Full path of the executable, used to start the program. Only saved
+    /// for scenes with `launch`.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub path: String,
 }
@@ -72,6 +72,40 @@ impl Scenes {
 
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).expect("scenes are serializable")
+    }
+
+    /// Does `text` still contain window titles? Version 1.2.24 and earlier
+    /// saved them; titles can contain sensitive data, so such a file should
+    /// be written again without them.
+    pub fn has_window_titles(text: &str) -> bool {
+        let Ok(table) = text.parse::<toml::Table>() else {
+            return false;
+        };
+        table
+            .get("scene")
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s.get("monitors")?.as_array())
+            .flatten()
+            .filter_map(|m| m.get("windows")?.as_array())
+            .flatten()
+            .any(|w| w.get("title").is_some())
+    }
+
+    /// Removes the program paths of scenes without `launch`: only starting
+    /// programs needs them. Returns whether anything was removed.
+    pub fn drop_unused_paths(&mut self) -> bool {
+        let mut changed = false;
+        for scene in self.scenes.iter_mut().filter(|s| !s.launch) {
+            for window in scene.monitors.iter_mut().flat_map(|m| &mut m.windows) {
+                if !window.path.is_empty() {
+                    window.path.clear();
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     pub fn get(&self, name: &str) -> Option<&Scene> {
@@ -117,41 +151,28 @@ impl Scene {
         self.monitors.iter().map(|m| m.windows.len()).sum()
     }
 
-    /// Matches live windows to the scene's entries, like `state.json` does
-    /// after a restart: same program (exe and class) and the same title
-    /// first, then any window of the same program. Each live window and
-    /// each entry is used at most once. Sorted by monitor and entry, i.e.
-    /// in the scene's order.
+    /// Matches live windows to the scene's entries by program (exe and
+    /// class), in order: the n-th entry of a program gets the n-th live
+    /// window of it. Each live window and each entry is used at most once.
+    /// Sorted by monitor and entry, i.e. in the scene's order.
     pub fn assign(&self, live: &[WindowProps<'_>]) -> Vec<Assignment> {
-        let same_program = |e: &SceneWindow, w: &WindowProps<'_>| {
-            e.exe.eq_ignore_ascii_case(w.exe) && e.class == w.class
-        };
         let mut taken = vec![false; live.len()];
         let mut result = Vec::new();
-        for exact in [true, false] {
-            for (m, monitor) in self.monitors.iter().enumerate() {
-                for (e, entry) in monitor.windows.iter().enumerate() {
-                    if result
-                        .iter()
-                        .any(|a: &Assignment| a.monitor == m && a.entry == e)
-                    {
-                        continue;
-                    }
-                    let found = live.iter().enumerate().position(|(i, w)| {
-                        !taken[i] && same_program(entry, w) && (!exact || entry.title == w.title)
+        for (m, monitor) in self.monitors.iter().enumerate() {
+            for (e, entry) in monitor.windows.iter().enumerate() {
+                let found = live.iter().enumerate().position(|(i, w)| {
+                    !taken[i] && entry.exe.eq_ignore_ascii_case(w.exe) && entry.class == w.class
+                });
+                if let Some(window) = found {
+                    taken[window] = true;
+                    result.push(Assignment {
+                        monitor: m,
+                        entry: e,
+                        window,
                     });
-                    if let Some(window) = found {
-                        taken[window] = true;
-                        result.push(Assignment {
-                            monitor: m,
-                            entry: e,
-                            window,
-                        });
-                    }
                 }
             }
         }
-        result.sort_by_key(|a| (a.monitor, a.entry));
         result
     }
 }
@@ -160,21 +181,20 @@ impl Scene {
 mod tests {
     use super::*;
 
-    fn window(exe: &str, title: &str, zone: usize) -> SceneWindow {
+    fn window(exe: &str, zone: usize) -> SceneWindow {
         SceneWindow {
             exe: exe.into(),
             class: "Cls".into(),
-            title: title.into(),
             zone,
             path: String::new(),
         }
     }
 
-    fn props<'a>(exe: &'a str, title: &'a str) -> WindowProps<'a> {
+    fn props(exe: &str) -> WindowProps<'_> {
         WindowProps {
             exe,
             class: "Cls",
-            title,
+            title: "any",
         }
     }
 
@@ -195,15 +215,11 @@ mod tests {
     }
 
     #[test]
-    fn assigns_same_title_first_then_same_program() {
+    fn assigns_windows_of_the_same_program_in_order() {
         let mut s = scene("work", false, &["A", "B"]);
-        s.monitors[0].windows = vec![window("code.exe", "a", 1), window("code.exe", "b", 2)];
-        s.monitors[1].windows = vec![window("chrome.exe", "x", 1), window("mail.exe", "m", 1)];
-        let live = [
-            props("Code.exe", "new"),
-            props("chrome.exe", "y"),
-            props("code.exe", "b"),
-        ];
+        s.monitors[0].windows = vec![window("code.exe", 1), window("code.exe", 2)];
+        s.monitors[1].windows = vec![window("chrome.exe", 1), window("mail.exe", 1)];
+        let live = [props("Code.exe"), props("chrome.exe"), props("code.exe")];
         let assigned = s.assign(&live);
         assert_eq!(
             assigned,
@@ -258,11 +274,56 @@ mod tests {
     fn toml_roundtrip() {
         let mut s = scene("desk", true, &["\\\\?\\DISPLAY#DEL"]);
         s.monitors[0].zones = vec![ZoneMode::Stack, ZoneMode::Auto];
-        s.monitors[0].windows = vec![window("code.exe", "a \"quoted\" title", 2)];
+        s.monitors[0].windows = vec![window("code.exe", 2)];
         s.monitors[0].windows[0].path = "C:\\Program Files\\Code\\Code.exe".into();
         let scenes = Scenes { scenes: vec![s] };
         let text = scenes.to_toml();
         assert_eq!(Scenes::parse(&text).unwrap(), scenes, "{text}");
         assert_eq!(Scenes::parse("").unwrap(), Scenes::default());
+        assert!(!text.contains("title"), "{text}");
+        assert!(!Scenes::has_window_titles(&text));
+    }
+
+    #[test]
+    fn old_files_with_titles_still_load_and_are_detected() {
+        let old = r#"
+            [[scene]]
+            name = "desk"
+
+            [[scene.monitors]]
+            id = "A"
+            layout = "single"
+
+            [[scene.monitors.windows]]
+            exe = "code.exe"
+            class = "Cls"
+            title = "secret.txt - Visual Studio Code"
+            zone = 1
+        "#;
+        assert!(Scenes::has_window_titles(old));
+        let scenes = Scenes::parse(old).unwrap();
+        assert_eq!(scenes.scenes[0].monitors[0].windows[0].exe, "code.exe");
+        assert!(!Scenes::has_window_titles(&scenes.to_toml()));
+        assert!(!Scenes::has_window_titles("not toml ["));
+    }
+
+    #[test]
+    fn paths_are_kept_only_for_launch_scenes() {
+        let mut quiet = scene("quiet", false, &["A"]);
+        quiet.monitors[0].windows = vec![window("code.exe", 1)];
+        quiet.monitors[0].windows[0].path = "C:\\Code\\Code.exe".into();
+        let mut launching = quiet.clone();
+        launching.name = "launching".into();
+        launching.launch = true;
+        let mut scenes = Scenes {
+            scenes: vec![quiet, launching],
+        };
+        assert!(scenes.drop_unused_paths());
+        assert!(scenes.scenes[0].monitors[0].windows[0].path.is_empty());
+        assert_eq!(
+            scenes.scenes[1].monitors[0].windows[0].path,
+            "C:\\Code\\Code.exe"
+        );
+        assert!(!scenes.drop_unused_paths());
     }
 }
