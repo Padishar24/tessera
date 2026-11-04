@@ -51,7 +51,10 @@ modifier = "shift"
 #          toggle-orientation, resize <grow|shrink>, toggle-monocle,
 #          cycle-layout <next|prev>, toggle-pause, switch-desktop <n>,
 #          move-to-desktop <n>, hint, toggle-scratchpad <n>, open-editor,
-#          open-explorer, reload-config, quit
+#          open-shortcuts, open-explorer, reload-config, quit
+#
+# The tray menu "Keyboard shortcuts" lists all actions and lets you change
+# the shortcuts here; it keeps the comments in this file.
 #
 # ⚠ marks shortcuts that override a Windows function. Delete the line
 #   to keep the Windows function. Win+L and Ctrl+Alt+Del cannot be bound.

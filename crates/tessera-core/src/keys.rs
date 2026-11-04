@@ -237,6 +237,113 @@ const RESERVED_CTRL_ALT_DEL: KeyCombo = KeyCombo {
     key: Key::Vk(VK_DELETE),
 };
 
+/// Windows functions that a binding takes over (the keyboard hook sees keys
+/// before Windows does). Numbered entries stand for 1 to 9.
+const WINDOWS_FUNCTIONS: &[(&str, &str)] = &[
+    ("win+alt+k", "Mute microphone (Teams)"),
+    ("win+alt+up", "Snap the window to the top half"),
+    ("win+alt+down", "Snap the window to the bottom half"),
+    ("win+alt+#", "Jump list of the n-th taskbar app"),
+    ("win+alt+b", "Turn HDR on or off"),
+    ("win+alt+d", "Show date and time"),
+    ("win+alt+g", "Record the last 30 seconds (Game Bar)"),
+    ("win+alt+r", "Start or stop recording (Game Bar)"),
+    ("win+#", "Start or switch to the n-th taskbar app"),
+    ("win+shift+#", "New instance of the n-th taskbar app"),
+    ("win+ctrl+#", "Last window of the n-th taskbar app"),
+    ("win+left", "Snap the window left"),
+    ("win+right", "Snap the window right"),
+    ("win+up", "Maximize the window"),
+    ("win+down", "Restore or minimize the window"),
+    (
+        "win+shift+left",
+        "Move the window to the monitor on the left",
+    ),
+    (
+        "win+shift+right",
+        "Move the window to the monitor on the right",
+    ),
+    ("win+shift+up", "Stretch the window vertically"),
+    ("win+ctrl+left", "Previous virtual desktop"),
+    ("win+ctrl+right", "Next virtual desktop"),
+    ("win+ctrl+d", "New virtual desktop"),
+    ("win+ctrl+f4", "Close the virtual desktop"),
+    ("win+ctrl+enter", "Narrator"),
+    ("win+ctrl+q", "Quick Assist"),
+    ("win+ctrl+shift+b", "Restart the graphics driver"),
+    ("win+tab", "Task view"),
+    ("win+a", "Quick settings"),
+    ("win+b", "Focus the notification area"),
+    ("win+d", "Show the desktop"),
+    ("win+e", "Open File Explorer"),
+    ("win+g", "Xbox Game Bar"),
+    ("win+h", "Voice typing"),
+    ("win+i", "Settings"),
+    ("win+k", "Cast to a display"),
+    ("win+m", "Minimize all windows"),
+    ("win+shift+m", "Restore minimized windows"),
+    ("win+n", "Notifications"),
+    ("win+p", "Project to a display"),
+    ("win+r", "Run"),
+    ("win+s", "Search"),
+    ("win+shift+s", "Snipping Tool"),
+    ("win+t", "Cycle through taskbar apps"),
+    ("win+u", "Accessibility settings"),
+    ("win+v", "Clipboard history"),
+    ("win+w", "Widgets"),
+    ("win+x", "Quick Link menu"),
+    ("win+z", "Snap layouts"),
+    ("win+home", "Minimize all but the active window"),
+    ("win+comma", "Peek at the desktop"),
+    ("win+period", "Emoji panel"),
+    ("win+space", "Switch input language"),
+    ("win+plus", "Magnifier: zoom in"),
+    ("win+minus", "Magnifier: zoom out"),
+    ("win+escape", "Close Magnifier"),
+    ("alt+tab", "Switch windows"),
+    ("alt+escape", "Cycle through windows"),
+    ("alt+f4", "Close the window"),
+    ("alt+space", "Window menu"),
+    ("ctrl+escape", "Start menu"),
+    ("ctrl+shift+escape", "Task Manager"),
+];
+
+/// The Windows function a binding of `combo` takes over, if any.
+pub fn windows_function(combo: KeyCombo) -> Option<&'static str> {
+    let text = combo.to_string();
+    let numbered = match text.rsplit_once('+') {
+        Some((mods, key)) if key.len() == 1 && key.as_bytes()[0].is_ascii_digit() && key != "0" => {
+            Some(format!("{mods}+#"))
+        }
+        _ => None,
+    };
+    WINDOWS_FUNCTIONS
+        .iter()
+        .find(|(entry, _)| *entry == text || numbered.as_deref() == Some(*entry))
+        .map(|(_, function)| *function)
+}
+
+impl KeyCombo {
+    /// For people, e.g. `Win+Alt+Shift+H`, `Win+Alt+PageUp`, `Win+Alt+^`.
+    pub fn display_name(&self) -> String {
+        self.to_string()
+            .split('+')
+            .map(|part| match part {
+                "pageup" => "PageUp".to_owned(),
+                "pagedown" => "PageDown".to_owned(),
+                _ => {
+                    let mut chars = part.chars();
+                    match chars.next() {
+                        Some(first) => first.to_uppercase().chain(chars).collect(),
+                        None => String::new(),
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("+")
+    }
+}
+
 impl fmt::Display for KeyCombo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (m, name) in [
@@ -306,6 +413,35 @@ mod tests {
             assert_eq!(combo(s).to_string(), s);
             assert_eq!(combo(&combo(s).to_string()), combo(s));
         }
+    }
+
+    #[test]
+    fn knows_the_windows_functions_a_binding_takes_over() {
+        assert_eq!(
+            windows_function(combo("alt+win+k")),
+            Some("Mute microphone (Teams)")
+        );
+        assert_eq!(
+            windows_function(combo("win+alt+7")),
+            Some("Jump list of the n-th taskbar app")
+        );
+        assert_eq!(windows_function(combo("win+alt+0")), None);
+        assert_eq!(windows_function(combo("win+alt+h")), None);
+        for (entry, _) in WINDOWS_FUNCTIONS {
+            let entry = entry.replace('#', "1");
+            assert!(entry.parse::<KeyCombo>().is_ok(), "{entry}");
+        }
+    }
+
+    #[test]
+    fn display_names_are_capitalized() {
+        assert_eq!(combo("alt+win+h").display_name(), "Win+Alt+H");
+        assert_eq!(
+            combo("win+ctrl+alt+shift+pageup").display_name(),
+            "Win+Ctrl+Alt+Shift+PageUp"
+        );
+        assert_eq!(combo("win+alt+^").display_name(), "Win+Alt+^");
+        assert_eq!(combo("win+alt++").display_name(), "Win+Alt+Plus");
     }
 
     #[test]

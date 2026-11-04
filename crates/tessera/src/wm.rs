@@ -2,6 +2,7 @@
 //! desktop, zones, actions. Runs exclusively on the main thread.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use tessera_core::action::{Action, Cycle, Direction, Resize};
@@ -715,9 +716,12 @@ impl Wm {
             return;
         }
         let general = &self.config.config.general;
+        // Tessera's own windows (the shortcuts window) float unless a rule
+        // says otherwise.
         let floats = tracked.rule.is_some_and(|r| r.float)
             || (general.float_fixed_size && !window.is_resizable())
-            || !general.auto_tile;
+            || !general.auto_tile
+            || (tracked.rule.is_none() && is_own_window(window));
         if !window.can_be_moved() {
             tracing::info!(
                 hwnd = window.id(),
@@ -1165,7 +1169,11 @@ impl Wm {
             Action::MoveToDesktop(n) => self.move_to_desktop(usize::from(n) - 1),
             Action::Hint => self.start_hints(),
             Action::ToggleScratchpad(n) => self.toggle_scratchpad(usize::from(n) - 1),
-            Action::OpenEditor | Action::OpenExplorer | Action::ReloadConfig | Action::Quit => {
+            Action::OpenEditor
+            | Action::OpenShortcuts
+            | Action::OpenExplorer
+            | Action::ReloadConfig
+            | Action::Quit => {
                 unreachable!("handled by the daemon")
             }
         }
@@ -2512,6 +2520,21 @@ fn spawn(program: &str, args: &[String]) -> Result<(), String> {
         .spawn()
         .map(drop)
         .map_err(|e| format!("could not start `{program}`: {e}"))
+}
+
+/// Does the window belong to a process of Tessera's own executable, e.g.
+/// the shortcuts window (`tessera shortcuts`)?
+fn is_own_window(window: Window) -> bool {
+    static OWN_EXE: OnceLock<Option<String>> = OnceLock::new();
+    let own = OWN_EXE.get_or_init(|| {
+        std::env::current_exe()
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+    });
+    match (own, window.exe_path()) {
+        (Some(own), Some(path)) => own.eq_ignore_ascii_case(&path),
+        _ => false,
+    }
 }
 
 /// Can a scene start the program at `path` directly? Store apps can only be

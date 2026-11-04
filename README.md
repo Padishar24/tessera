@@ -32,8 +32,8 @@ target/release/tessera.exe
 ```
 
 On first start, Tessera creates `%APPDATA%\Tessera\config.toml` and `layouts.toml`. It runs in
-the system tray. From the tray menu you can open the configuration or the zone editor and turn
-on "Start with Windows". On exit, every window returns to its original
+the system tray. From the tray menu you can open the configuration, the zone editor or the
+keyboard shortcuts and turn on "Start with Windows". On exit, every window returns to its original
 position; maximized windows are maximized again.
 
 Logs are written to `%LOCALAPPDATA%\Tessera\logs`.
@@ -182,6 +182,27 @@ switches to a layout with a different number of zones, its zones start again in 
 
 Shortcuts marked ⚠ in `config.toml` override built-in Windows shortcuts; delete the line to
 keep the Windows function. `Win+L` and `Ctrl+Alt+Del` cannot be assigned.
+
+## Keyboard shortcuts window
+
+Open it from the tray ("Keyboard shortcuts"), with `tessera shortcuts`, or bind the action
+`open-shortcuts` to a shortcut (none by default). The window floats (`Win+Alt+F` tiles it, a
+`[[rules]]` entry for `tessera\.exe` overrides this). It lists every action Tessera has, grouped by
+topic, with its shortcuts or "Not bound", and shows for each shortcut whether it
+
+- overrides a Windows shortcut (⚠, with the Windows function),
+- uses a key that does not exist on the current keyboard layout and therefore never fires,
+- comes from `explorer_tabs` or from a scratchpad's `key` instead of `[keybindings]`.
+
+Default shortcuts that are missing from your `config.toml` appear as "Default … removed" with
+a "Restore" button. Search filters by action or key; "Find by keys" shows what a combination
+does when you press it.
+
+Click a shortcut to change or remove it, or `+` to add one. "Press the keys" records the next
+combination, including ones Windows or Tessera use; you can also type it, e.g. `win+alt+k`. If
+the combination already belongs to another action, saving moves it. Changes go straight into
+`config.toml`, keep its comments and the order of the lines, and work right away while Tessera
+runs. A new shortcut that overrides a Windows shortcut gets a `# ⚠` note in the file.
 
 ## Zone editor
 

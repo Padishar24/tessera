@@ -6,6 +6,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 pub const OPEN_CONFIG: &str = "open-config";
 pub const RELOAD_CONFIG: &str = "reload-config";
 pub const OPEN_EDITOR: &str = "open-editor";
+pub const OPEN_SHORTCUTS: &str = "open-shortcuts";
 pub const OPEN_LOGS: &str = "open-logs";
 pub const AUTOSTART: &str = "autostart";
 pub const SAVE_SCENE: &str = "save-scene";
@@ -44,6 +45,12 @@ pub fn create(autostart: bool) -> anyhow::Result<Tray> {
             None,
         ),
         &MenuItem::with_id(MenuId::new(OPEN_EDITOR), "Open zone editor", true, None),
+        &MenuItem::with_id(
+            MenuId::new(OPEN_SHORTCUTS),
+            "Keyboard shortcuts",
+            true,
+            None,
+        ),
         &MenuItem::with_id(MenuId::new(OPEN_LOGS), "Open log folder", true, None),
         &PredefinedMenuItem::separator(),
         &autostart,

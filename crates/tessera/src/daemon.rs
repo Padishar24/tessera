@@ -466,6 +466,7 @@ impl Daemon {
                 }
             }
             tray::OPEN_EDITOR => self.open_editor(),
+            tray::OPEN_SHORTCUTS => self.open_shortcuts(),
             tray::OPEN_LOGS => open(&paths::log_dir()),
             tray::AUTOSTART => self.toggle_autostart(),
             tray::SAVE_SCENE => {
@@ -534,6 +535,10 @@ impl Daemon {
             Action::ReloadConfig => self.reload_config().map_err(|e| format!("{e:#}")),
             Action::OpenEditor => {
                 self.open_editor();
+                Ok(())
+            }
+            Action::OpenShortcuts => {
+                self.open_shortcuts();
                 Ok(())
             }
             Action::OpenExplorer => {
@@ -622,6 +627,25 @@ The previous configuration remains active."
 
     /// Starts the zone editor as a separate process for the current monitor.
     fn open_editor(&mut self) {
+        let mut args = vec!["editor".to_owned()];
+        if let Some((monitor, layout)) = self.wm.editor_target() {
+            args.extend([
+                "--monitor".to_owned(),
+                monitor,
+                "--layout".to_owned(),
+                layout,
+            ]);
+        }
+        self.start_window("Zone editor", &args);
+    }
+
+    fn open_shortcuts(&mut self) {
+        self.start_window("Shortcuts window", &["shortcuts".to_owned()]);
+    }
+
+    /// Starts `tessera.exe` with the same configuration and `args`, e.g.
+    /// the zone editor.
+    fn start_window(&self, what: &str, args: &[String]) {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(e) => {
@@ -630,12 +654,9 @@ The previous configuration remains active."
             }
         };
         let mut command = std::process::Command::new(exe);
-        command.arg("--config").arg(&self.config_path).arg("editor");
-        if let Some((monitor, layout)) = self.wm.editor_target() {
-            command.args(["--monitor", &monitor, "--layout", &layout]);
-        }
+        command.arg("--config").arg(&self.config_path).args(args);
         if let Err(e) = command.spawn() {
-            tracing::error!("Zone editor could not be started: {e}");
+            tracing::error!("{what} could not be started: {e}");
         }
     }
 

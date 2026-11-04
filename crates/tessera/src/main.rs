@@ -1,5 +1,5 @@
 //! `tessera.exe` – the daemon (without a console window); with `editor`, the
-//! zone editor.
+//! zone editor; with `shortcuts`, the keyboard shortcuts window.
 
 #![windows_subsystem = "windows"]
 
@@ -36,6 +36,8 @@ enum Command {
         #[arg(long)]
         layout: Option<String>,
     },
+    /// Show and edit the keyboard shortcuts.
+    Shortcuts,
 }
 
 fn main() -> ExitCode {
@@ -60,6 +62,7 @@ fn main() -> ExitCode {
     let prefix = match args.command {
         None => "tessera",
         Some(Command::Editor { .. }) => "editor",
+        Some(Command::Shortcuts) => "shortcuts",
     };
     let _log_guard = match logging::init(&args.log_level, prefix) {
         Ok(guard) => Some(guard),
@@ -76,6 +79,7 @@ fn main() -> ExitCode {
     let result = match args.command {
         None => daemon::run(args.config),
         Some(Command::Editor { monitor, layout }) => run_editor(args.config, monitor, layout),
+        Some(Command::Shortcuts) => run_shortcuts(args.config),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -108,4 +112,13 @@ fn run_editor(
         monitor,
         layout,
     })
+}
+
+fn run_shortcuts(config: Option<PathBuf>) -> anyhow::Result<()> {
+    let config_path = match config {
+        Some(path) => path,
+        None => paths::ensure_config()?,
+    };
+    let layouts_path = paths::layouts_file_for(&config_path);
+    tessera_editor::run_shortcuts(config_path, layouts_path)
 }

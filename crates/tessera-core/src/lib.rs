@@ -13,6 +13,7 @@ pub mod nav;
 pub mod rules;
 pub mod scene;
 pub mod scratchpad;
+pub mod shortcuts;
 pub mod state;
 pub mod tree;
 pub mod workspace;

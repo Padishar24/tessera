@@ -24,8 +24,9 @@ use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-    KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LCONTROL, VK_LMENU,
-    VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VkKeyScanW,
+    KEYEVENTF_KEYUP, MAPVK_VK_TO_CHAR, MapVirtualKeyW, SendInput, VIRTUAL_KEY, VK_CONTROL,
+    VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU,
+    VK_RSHIFT, VK_RWIN, VK_SHIFT, VkKeyScanW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
@@ -188,6 +189,39 @@ impl Drop for Hotkeys {
 
 fn lock() -> std::sync::MutexGuard<'static, Option<Shared>> {
     SHARED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Does the key exist on the current keyboard layout? Only characters like
+/// `^` can be missing.
+pub fn key_exists(key: Key) -> bool {
+    resolve(key).is_some()
+}
+
+/// The key for a virtual-key code as written in `config.toml`: punctuation
+/// keys as their character on the current layout (`^` rather than `oem5`).
+pub fn key_for_vk(vk: u16) -> Key {
+    let named = Key::Vk(vk);
+    let combo = KeyCombo {
+        mods: Modifiers::WIN,
+        key: named,
+    };
+    // Letters, digits and keys with a name stay as they are.
+    if !combo.to_string().contains("oem") {
+        return named;
+    }
+    // SAFETY: pure query of the keyboard layout. The high bit marks dead keys.
+    let mapped = unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_CHAR) } & 0xFFFF;
+    match char::from_u32(mapped) {
+        Some(c) if !c.is_control() && !c.is_whitespace() && c != '+' => {
+            let c = c.to_lowercase().next().unwrap_or(c);
+            if resolve(Key::Char(c)) == Some(vk) {
+                Key::Char(c)
+            } else {
+                named
+            }
+        }
+        _ => named,
+    }
 }
 
 fn resolve(key: Key) -> Option<u16> {

@@ -13,6 +13,7 @@ pub mod msgloop;
 pub mod overlay;
 pub mod pipe;
 pub mod position;
+pub mod recorder;
 pub mod shell;
 pub mod tabbar;
 pub mod vdesk;

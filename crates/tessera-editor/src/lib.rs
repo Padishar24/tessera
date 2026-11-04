@@ -1,8 +1,10 @@
-//! Tessera's graphical zone editor. Runs as a separate process
-//! (`tessera editor`) so that its event loop does not get in the way of
-//! the daemon's.
+//! Tessera's graphical zone editor and shortcuts window. They run as a
+//! separate process (`tessera editor`, `tessera shortcuts`) so that their
+//! event loop does not get in the way of the daemon's.
 
 mod app;
+pub mod config_store;
+mod shortcuts;
 pub mod store;
 
 use std::path::PathBuf;
@@ -111,4 +113,40 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         Box::new(move |cc| Ok(Box::new(app::EditorApp::new(cc, setup)))),
     )
     .map_err(|e| anyhow::anyhow!("editor window: {e}"))
+}
+
+/// Opens the shortcuts window for `config_path`; if it is open already,
+/// brings it to the front.
+pub fn run_shortcuts(config_path: PathBuf, layouts_path: PathBuf) -> anyhow::Result<()> {
+    let Some(_instance) = tessera_win::instance::SingleInstance::acquire("Tessera.Shortcuts")?
+    else {
+        if let Some(window) = tessera_win::window::enumerate()
+            .into_iter()
+            .find(|w| w.title() == shortcuts::TITLE)
+        {
+            position::focus(window);
+        }
+        return Ok(());
+    };
+    tracing::info!("shortcuts window opened");
+    let viewport = egui::ViewportBuilder::default()
+        .with_title(shortcuts::TITLE)
+        .with_inner_size(egui::vec2(820.0, 720.0))
+        .with_min_inner_size(egui::vec2(560.0, 360.0));
+    let native = eframe::NativeOptions {
+        viewport,
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Tessera shortcuts",
+        native,
+        Box::new(move |_cc| {
+            Ok(Box::new(shortcuts::ShortcutsApp::new(
+                config_path,
+                layouts_path,
+            )))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("shortcuts window: {e}"))
 }

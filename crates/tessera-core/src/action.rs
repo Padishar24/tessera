@@ -51,10 +51,140 @@ pub enum Action {
     /// Show or hide a scratchpad, 1-based position in `[[scratchpads]]`.
     ToggleScratchpad(u8),
     OpenEditor,
+    /// The window listing all shortcuts.
+    OpenShortcuts,
     /// New tab in the topmost File Explorer window, otherwise a new window.
     OpenExplorer,
     ReloadConfig,
     Quit,
+}
+
+/// Topic an action is listed under in the shortcuts window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Group {
+    FocusAndMove,
+    Zones,
+    StacksAndLayout,
+    Desktops,
+    Scratchpads,
+    Tessera,
+}
+
+impl Group {
+    pub const ALL: [Group; 6] = [
+        Group::FocusAndMove,
+        Group::Zones,
+        Group::StacksAndLayout,
+        Group::Desktops,
+        Group::Scratchpads,
+        Group::Tessera,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Group::FocusAndMove => "Focus and move",
+            Group::Zones => "Zones",
+            Group::StacksAndLayout => "Stacks and layout",
+            Group::Desktops => "Virtual desktops",
+            Group::Scratchpads => "Scratchpads",
+            Group::Tessera => "Tessera",
+        }
+    }
+}
+
+/// Zones and desktops listed in the shortcuts window even without a binding.
+pub const CATALOG_NUMBERS: u8 = 9;
+
+impl Action {
+    pub fn group(self) -> Group {
+        match self {
+            Action::Focus(_) | Action::Move(_) | Action::Swap(_) | Action::Hint => {
+                Group::FocusAndMove
+            }
+            Action::MoveToZone(_) | Action::ToggleFloat | Action::TogglePause => Group::Zones,
+            Action::ToggleStack
+            | Action::CycleStack(_)
+            | Action::ToggleOrientation
+            | Action::Resize(_)
+            | Action::ToggleMonocle
+            | Action::CycleLayout(_) => Group::StacksAndLayout,
+            Action::SwitchDesktop(_) | Action::MoveToDesktop(_) => Group::Desktops,
+            Action::ToggleScratchpad(_) => Group::Scratchpads,
+            Action::OpenEditor
+            | Action::OpenShortcuts
+            | Action::OpenExplorer
+            | Action::ReloadConfig
+            | Action::Quit => Group::Tessera,
+        }
+    }
+
+    /// What the action does, for people, e.g. `Move to zone 3`.
+    pub fn label(self) -> String {
+        match self {
+            Action::Focus(d) => format!("Focus {d}"),
+            Action::Move(d) => format!("Move {d}"),
+            Action::Swap(d) => format!("Swap {d}"),
+            Action::MoveToZone(n) => format!("Move to zone {n}"),
+            Action::ToggleFloat => "Float or tile the window".into(),
+            Action::ToggleStack => "Stack or unstack the zone".into(),
+            Action::CycleStack(Cycle::Next) => "Next window in the stack".into(),
+            Action::CycleStack(Cycle::Prev) => "Previous window in the stack".into(),
+            Action::ToggleOrientation => "Switch split orientation".into(),
+            Action::Resize(Resize::Grow) => "Grow the window".into(),
+            Action::Resize(Resize::Shrink) => "Shrink the window".into(),
+            Action::ToggleMonocle => "Monocle (one window fills the monitor)".into(),
+            Action::CycleLayout(Cycle::Next) => "Next layout".into(),
+            Action::CycleLayout(Cycle::Prev) => "Previous layout".into(),
+            Action::TogglePause => "Pause tiling on this monitor".into(),
+            Action::SwitchDesktop(n) => format!("Switch to desktop {n}"),
+            Action::MoveToDesktop(n) => format!("Move window to desktop {n}"),
+            Action::Hint => "Window hints (letters on every window)".into(),
+            Action::ToggleScratchpad(n) => format!("Scratchpad {n}"),
+            Action::OpenEditor => "Open the zone editor".into(),
+            Action::OpenShortcuts => "Open the keyboard shortcuts".into(),
+            Action::OpenExplorer => "Open File Explorer".into(),
+            Action::ReloadConfig => "Reload the configuration".into(),
+            Action::Quit => "Exit Tessera".into(),
+        }
+    }
+
+    /// Every action that can be bound: those with a number for zones and
+    /// desktops 1 to [`CATALOG_NUMBERS`], scratchpads 1 to `scratchpads`.
+    /// In the order of the shortcuts window.
+    pub fn catalog(scratchpads: u8) -> Vec<Action> {
+        use Direction::*;
+        let directions = [Left, Down, Up, Right];
+        let numbers = 1..=CATALOG_NUMBERS;
+        let mut all = Vec::new();
+        all.extend(directions.map(Action::Focus));
+        all.extend(directions.map(Action::Move));
+        all.extend(directions.map(Action::Swap));
+        all.push(Action::Hint);
+        all.extend(numbers.clone().map(Action::MoveToZone));
+        all.extend([Action::ToggleFloat, Action::TogglePause]);
+        all.extend([
+            Action::ToggleStack,
+            Action::CycleStack(Cycle::Next),
+            Action::CycleStack(Cycle::Prev),
+            Action::ToggleOrientation,
+            Action::Resize(Resize::Grow),
+            Action::Resize(Resize::Shrink),
+            Action::ToggleMonocle,
+            Action::CycleLayout(Cycle::Next),
+            Action::CycleLayout(Cycle::Prev),
+        ]);
+        all.extend(numbers.clone().map(Action::SwitchDesktop));
+        all.extend(numbers.map(Action::MoveToDesktop));
+        all.extend((1..=scratchpads).map(Action::ToggleScratchpad));
+        all.extend([
+            Action::OpenEditor,
+            Action::OpenShortcuts,
+            Action::OpenExplorer,
+            Action::ReloadConfig,
+            Action::Quit,
+        ]);
+        all
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -145,6 +275,7 @@ impl FromStr for Action {
             "hint" => none(Action::Hint),
             "toggle-scratchpad" => Ok(Action::ToggleScratchpad(number()?)),
             "open-editor" => none(Action::OpenEditor),
+            "open-shortcuts" => none(Action::OpenShortcuts),
             "open-explorer" => none(Action::OpenExplorer),
             "reload-config" => none(Action::ReloadConfig),
             "quit" => none(Action::Quit),
@@ -194,6 +325,7 @@ impl fmt::Display for Action {
             Action::Hint => f.write_str("hint"),
             Action::ToggleScratchpad(n) => write!(f, "toggle-scratchpad {n}"),
             Action::OpenEditor => f.write_str("open-editor"),
+            Action::OpenShortcuts => f.write_str("open-shortcuts"),
             Action::OpenExplorer => f.write_str("open-explorer"),
             Action::ReloadConfig => f.write_str("reload-config"),
             Action::Quit => f.write_str("quit"),
@@ -220,11 +352,26 @@ mod tests {
             "move-to-desktop 9",
             "hint",
             "toggle-scratchpad 2",
+            "open-shortcuts",
             "open-explorer",
             "quit",
         ] {
             let action: Action = text.parse().unwrap();
             assert_eq!(action.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn catalog_lists_every_action_once_and_in_group_order() {
+        let all = Action::catalog(2);
+        let unique: std::collections::HashSet<_> = all.iter().collect();
+        assert_eq!(unique.len(), all.len());
+        assert!(all.contains(&Action::ToggleScratchpad(2)));
+        assert!(!all.contains(&Action::ToggleScratchpad(3)));
+        assert!(all.contains(&Action::MoveToDesktop(9)));
+        assert!(all.windows(2).all(|w| w[0].group() <= w[1].group()));
+        for action in all {
+            assert_eq!(action.to_string().parse::<Action>(), Ok(action));
         }
     }
 
