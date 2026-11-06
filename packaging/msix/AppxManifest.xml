@@ -40,7 +40,12 @@
   </Resources>
 
   <Applications>
-    <Application Id="Tessera" Executable="tessera.exe" EntryPoint="Windows.FullTrustApplication">
+    <!-- One application only: the Store rejects a second one without a Start
+         menu entry (a "headless app"), so the command line
+         is an alias of this one. SupportsMultipleInstances is required by
+         the console alias; Tessera itself stays single-instance (mutex). -->
+    <Application Id="Tessera" Executable="tessera.exe" EntryPoint="Windows.FullTrustApplication"
+                 desktop4:SupportsMultipleInstances="true">
       <uap:VisualElements
         DisplayName="Tessera"
         Description="Window tiling manager: zones and auto-tiling for Windows 11"
@@ -52,25 +57,9 @@
         <desktop:Extension Category="windows.startupTask" Executable="tessera.exe" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="TesseraStartup" Enabled="false" DisplayName="Tessera" />
         </desktop:Extension>
-        <uap5:Extension Category="windows.appExecutionAlias" Executable="tessera.exe" EntryPoint="Windows.FullTrustApplication">
-          <uap5:AppExecutionAlias>
-            <uap5:ExecutionAlias Alias="tessera.exe" />
-          </uap5:AppExecutionAlias>
-        </uap5:Extension>
-      </Extensions>
-    </Application>
-
-    <!-- Command line (tesserac): no Start menu entry, only the alias for terminals. -->
-    <Application Id="Cli" Executable="tesserac.exe" EntryPoint="Windows.FullTrustApplication"
-                 desktop4:SupportsMultipleInstances="true">
-      <uap:VisualElements
-        DisplayName="Tessera command line"
-        Description="Control and diagnose Tessera from a terminal"
-        BackgroundColor="transparent"
-        Square150x150Logo="Assets\Square150x150Logo.png"
-        Square44x44Logo="Assets\Square44x44Logo.png"
-        AppListEntry="none" />
-      <Extensions>
+        <!-- Command line: runs tesserac.exe in the calling terminal. Only one
+             alias extension is allowed per application, so tessera.exe has none
+             (its editor and shortcuts window are in the tray menu). -->
         <uap5:Extension Category="windows.appExecutionAlias" Executable="tesserac.exe" EntryPoint="Windows.FullTrustApplication">
           <uap5:AppExecutionAlias desktop4:Subsystem="console">
             <uap5:ExecutionAlias Alias="tesserac.exe" />

@@ -27,8 +27,8 @@ The binaries are not signed yet, so Windows SmartScreen may warn on first start
 **Microsoft Store version** (once published): signed by Microsoft and updated automatically.
 It uses the same configuration folder as the zip version, so do not run both: quit one and turn
 off its "Start with Windows". In the Store version, "Start with Windows" is a startup app that
-you also find under Settings → Apps → Startup; `tessera` and `tesserac` work in any new
-terminal.
+you also find under Settings → Apps → Startup; `tesserac` works in any new terminal (the
+`tessera` command does not, use the tray menu instead).
 
 To build it yourself:
 

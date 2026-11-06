@@ -80,7 +80,8 @@ aliases). Test once on your own PC:
    - [ ] Zone editor (`Win+Alt+E`) and keyboard shortcuts window open.
    - [ ] Tray → "Start with Windows" turns on; Tessera appears under Settings → Apps → Startup;
          after signing out and in, it starts. Turning it off in the tray works too.
-   - [ ] In a **new** terminal: `tesserac query state` answers, `tessera editor` opens the editor.
+   - [ ] In a **new** terminal: `tesserac query state` answers. (`tessera` has no
+         command-line alias in the package; that is expected.)
    - [ ] Logs appear in `%LOCALAPPDATA%\Tessera\logs`.
 5. Remove the test package afterwards:
 
