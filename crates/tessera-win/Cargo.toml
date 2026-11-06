@@ -22,6 +22,8 @@ windows_058 = { package = "windows", version = "0.58", features = ["Win32_Founda
 [dependencies.windows]
 workspace = true
 features = [
+    "ApplicationModel",
+    "Foundation",
     "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Direct2D",
@@ -32,6 +34,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_IO",
     "Win32_System_LibraryLoader",

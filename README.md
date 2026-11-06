@@ -24,6 +24,12 @@ it is once you have turned on "Start with Windows": the autostart entry points t
 The binaries are not signed yet, so Windows SmartScreen may warn on first start
 ("More info" → "Run anyway").
 
+**Microsoft Store version** (once published): signed by Microsoft and updated automatically.
+It uses the same configuration folder as the zip version, so do not run both: quit one and turn
+off its "Start with Windows". In the Store version, "Start with Windows" is a startup app that
+you also find under Settings → Apps → Startup; `tessera` and `tesserac` work in any new
+terminal.
+
 To build it yourself:
 
 ```bash
@@ -261,6 +267,14 @@ provenance attestation) to a GitHub release. Each zip contains `THIRD_PARTY_LICE
 be changed, so fix mistakes with a new version. See [SECURITY.md](SECURITY.md) for reporting
 vulnerabilities and verifying downloads.
 
+The same run builds the Microsoft Store package: the workflow artifact `msix-store` contains an
+unsigned `.msixbundle` (x64 + ARM64) that the Store signs on submission. It is built by
+[`packaging/msix/build.ps1`](packaging/msix/build.ps1) from the manifest template and the logos
+in `packaging/msix` (regenerate the logos with `make-assets.py` after changing the icon). The
+package identity comes from the repository variables `MSIX_IDENTITY_NAME`, `MSIX_PUBLISHER`
+and `MSIX_PUBLISHER_DISPLAY_NAME`. How to submit it, test it locally and publish updates:
+[packaging/store/submission.md](packaging/store/submission.md).
+
 ## Limitations
 
 - **Windows running as administrator** cannot be moved by a normally started Tessera (UIPI).
@@ -274,4 +288,4 @@ vulnerabilities and verifying downloads.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Privacy: Tessera collects no data, see [PRIVACY.md](PRIVACY.md).

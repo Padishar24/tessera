@@ -618,7 +618,10 @@ The previous configuration remains active."
             .and_then(|exe| tessera_win::autostart::set(enabled, &exe));
         match result {
             Ok(()) => tracing::info!(enabled, "Autostart changed"),
-            Err(e) => tracing::error!("Autostart: {e:#}"),
+            Err(e) => {
+                tracing::error!("Autostart: {e:#}");
+                shell::message_box_async(TITLE, &format!("{e:#}"), MessageKind::Warning);
+            }
         }
         self.tray
             .autostart

@@ -11,6 +11,7 @@ pub mod layered;
 pub mod monitor;
 pub mod msgloop;
 pub mod overlay;
+pub mod package;
 pub mod pipe;
 pub mod position;
 pub mod recorder;

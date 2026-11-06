@@ -1,6 +1,7 @@
 # On every `v*` tag, builds the release zips (x64 and ARM64), attests their
 # provenance and attaches them to a GitHub release. The tag must match the
-# version in Cargo.toml; tests and cargo-deny (ci.yml) run first.
+# version in Cargo.toml; tests and cargo-deny (ci.yml) run first. The MSIX
+# bundle for the Microsoft Store is built as a separate workflow artifact.
 name: Release
 
 on:
@@ -93,6 +94,57 @@ jobs:
         with:
           name: tessera-${{ matrix.arch }}
           path: tessera-*.zip*
+          if-no-files-found: error
+      # Plain exes for the MSIX job.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-${{ matrix.arch }}
+          path: |
+            target/${{ matrix.target }}/release/tessera.exe
+            target/${{ matrix.target }}/release/tesserac.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # Microsoft Store package. The bundle is unsigned (the Store signs it), so it
+  # is NOT attached to the GitHub release: download the `msix-store` artifact
+  # of this run and upload it in Partner Center (packaging/store/submission.md).
+  # The artifact name must not match `tessera-*`, which the release job collects.
+  msix:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-x64
+          path: bin/x64
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-arm64
+          path: bin/arm64
+      - uses: actions/download-artifact@v8
+        with:
+          name: metadata
+          path: metadata
+      - name: Build MSIX bundle
+        shell: pwsh
+        env:
+          # Repository variables (Settings → Secrets and variables → Actions →
+          # Variables), values from Partner Center → Product identity.
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $identity = @{}
+          if ($env:MSIX_IDENTITY_NAME) { $identity.IdentityName = $env:MSIX_IDENTITY_NAME }
+          if ($env:MSIX_PUBLISHER) { $identity.Publisher = $env:MSIX_PUBLISHER }
+          if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $identity.PublisherDisplayName = $env:MSIX_PUBLISHER_DISPLAY_NAME }
+          ./packaging/msix/build.ps1 -X64 bin/x64 -Arm64 bin/arm64 `
+            -ThirdPartyLicenses metadata/THIRD_PARTY_LICENSES.html -Out msix @identity
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msix-store
+          path: msix/*.msixbundle
           if-no-files-found: error
 
   release:
