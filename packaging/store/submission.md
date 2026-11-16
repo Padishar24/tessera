@@ -75,14 +75,17 @@ aliases). Test once on your own PC:
 
 4. Start **Tessera** from the Start menu and check:
    - [ ] Tray icon appears, shortcuts and tiling work.
-   - [ ] Tray → open configuration opens `%APPDATA%\Tessera\config.toml` (the real folder, the
-         same file as the zip version uses).
+   - [ ] `tesserac paths` (in a **new** terminal) shows folders under
+         `%LOCALAPPDATA%\Packages\<package>\LocalCache`. On the first start, an existing zip
+         configuration from `%APPDATA%\Tessera` was copied there.
+   - [ ] Tray → open configuration opens that `config.toml` in the editor; a change saved there
+         takes effect after "Reload configuration".
    - [ ] Zone editor (`Win+Alt+E`) and keyboard shortcuts window open.
    - [ ] Tray → "Start with Windows" turns on; Tessera appears under Settings → Apps → Startup;
          after signing out and in, it starts. Turning it off in the tray works too.
    - [ ] In a **new** terminal: `tesserac query state` answers. (`tessera` has no
          command-line alias in the package; that is expected.)
-   - [ ] Logs appear in `%LOCALAPPDATA%\Tessera\logs`.
+   - [ ] Logs appear in the logs folder that `tesserac paths` shows.
 5. Remove the test package afterwards:
 
    ```powershell
@@ -144,21 +147,19 @@ including the screenshots and, optionally, the images in [`images/`](images/).
 
 ### Submission options → restricted capabilities
 
-Because the manifest declares restricted capabilities, Partner Center asks why. Paste:
+Because the manifest declares the restricted capability `runFullTrust`, Partner Center asks
+why. Paste:
 
 > **runFullTrust:** Tessera is a classic Win32 desktop application (window manager) packaged as
 > MSIX. It arranges the windows of other programs with the Win32 window APIs, registers a
 > low-level keyboard hook for its global shortcuts and runs in the notification area. It needs
 > full trust like every packaged desktop app.
 >
-> **unvirtualizedResources:** Tessera is configured by editing plain-text files
-> (`%APPDATA%\Tessera\config.toml`, `layouts.toml`). Users open and edit them in their own
-> editor, and the app's tray menu opens them with the system's file association. With
-> file-system virtualization these writes would go to a private package folder that other
-> programs cannot see, so the user could not find or edit the configuration. The same folder is
-> used by the portable (zip) version of Tessera, so users switching between them keep their
-> settings, and the configuration survives a reinstall. Only file-system write virtualization
-> is disabled; Tessera writes nowhere else.
+> Developer website: https://github.com/Padishar24/tessera
+> Support contact: https://github.com/Padishar24/tessera/issues
+
+(Version 1.5.24 also declared `unvirtualizedResources`; the Store denied it, so it was removed in
+1.6.24 and the Store version keeps its configuration in its package folder.)
 
 ### Submission options → notes for certification
 
@@ -181,14 +182,8 @@ shows the progress and, if rejected, the reason.
 ## 8. If certification fails
 
 - **Name or listing issues:** fix the text and resubmit; no new package needed.
-- **`unvirtualizedResources` rejected:** remove the line
-  `<desktop6:FileSystemWriteVirtualization>…` and the capability `unvirtualizedResources` from
-  the manifest. The configuration then lives in a private package folder
-  (`%LOCALAPPDATA%\Packages\<package>\LocalCache\Roaming\Tessera`), and Tessera's code must open
-  that folder instead of `%APPDATA%\Tessera` when it runs packaged. This needs a code change
-  first; do not just drop the capability.
-- **Crashes or "app doesn't start":** look at `%LOCALAPPDATA%\Tessera\logs` on a test install
-  (step 5).
+- **Crashes or "app doesn't start":** look at the logs folder that `tesserac paths` shows on a
+  test install (step 4), under `%LOCALAPPDATA%\Packages\<package>\LocalCache\Local\Tessera`.
 
 ## 9. Updates
 

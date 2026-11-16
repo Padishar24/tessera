@@ -9,9 +9,8 @@
   xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
-  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap5 desktop desktop4 desktop6 rescap">
+  IgnorableNamespaces="uap uap5 desktop desktop4 rescap">
 
   <Identity
     Name="$IDENTITY_NAME$"
@@ -25,10 +24,9 @@
     <DisplayName>Tessera Window Manager</DisplayName>
     <PublisherDisplayName>$PUBLISHER_DISPLAY_NAME$</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <!-- %APPDATA%\Tessera and %LOCALAPPDATA%\Tessera stay real folders: the
-         configuration is edited by hand in other programs, is shared with the
-         zip version and survives a reinstall. Needs unvirtualizedResources. -->
-    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+    <!-- No unvirtualizedResources (the Store denied it): writes to %APPDATA%
+         are redirected to the package's LocalCache folder, which Tessera
+         therefore uses directly (crates/tessera/src/paths.rs). -->
   </Properties>
 
   <Dependencies>
@@ -71,6 +69,5 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>

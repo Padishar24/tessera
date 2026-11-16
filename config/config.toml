@@ -1,7 +1,8 @@
 # Tessera – configuration
 #
-# Located at %APPDATA%\Tessera\config.toml. After making changes, choose
-# "Reload configuration" in the tray menu (or press Win+Alt+Shift+C).
+# Located at %APPDATA%\Tessera\config.toml (Store version: see
+# `tesserac paths`). After making changes, choose "Reload configuration"
+# in the tray menu (or press Win+Alt+Shift+C).
 # Check without restarting:  tesserac check-config
 
 [general]

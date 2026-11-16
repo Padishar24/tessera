@@ -1,6 +1,6 @@
 # Tessera – zone layouts
 #
-# Located at %APPDATA%\Tessera\layouts.toml. Each zone is its own
+# Located next to config.toml (`tesserac paths`). Each zone is its own
 # tiling tree: multiple windows in one zone are tiled automatically.
 # Win+Alt+^ cycles through these layouts in order.
 #

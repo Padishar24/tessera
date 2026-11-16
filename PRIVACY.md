@@ -27,9 +27,13 @@ To do its job, Tessera works with the following information. None of it leaves y
     These can contain program names that you or Tessera assigned to zones.
   - `%LOCALAPPDATA%\Tessera\logs`: log files, kept for 7 days. Depending on the log level, they
     can contain program names and window titles.
+  - The Microsoft Store version keeps both in its package folder instead,
+    `%LOCALAPPDATA%\Packages\<package>\LocalCache` (`Roaming\Tessera` and `Local\Tessera\logs`);
+    `tesserac paths` shows the exact locations.
 
-You can view, edit or delete these files at any time. Uninstalling Tessera does not delete them,
-so a reinstall keeps your configuration. Delete both folders to remove all traces.
+You can view, edit or delete these files at any time. Uninstalling the zip version does not
+delete them, so a reinstall keeps your configuration; delete both folders to remove all traces.
+Uninstalling the Store version deletes its package folder.
 
 ## Third parties
 

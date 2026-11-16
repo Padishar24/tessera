@@ -25,8 +25,12 @@ The binaries are not signed yet, so Windows SmartScreen may warn on first start
 ("More info" → "Run anyway").
 
 **Microsoft Store version** (once published): signed by Microsoft and updated automatically.
-It uses the same configuration folder as the zip version, so do not run both: quit one and turn
-off its "Start with Windows". In the Store version, "Start with Windows" is a startup app that
+It keeps its configuration and logs in its own package folder
+(`%LOCALAPPDATA%\Packages\<package>\LocalCache\Roaming\Tessera` and `...\Local\Tessera\logs`;
+`tesserac paths` shows them), which Windows deletes on uninstall. On its first start it copies
+the zip version's configuration, if there is one; after that the two are separate. Do not run
+both at the same time: quit one and turn off its "Start with Windows". In the Store version,
+"Start with Windows" is a startup app that
 you also find under Settings → Apps → Startup; `tesserac` works in any new terminal (the
 `tessera` command does not, use the tray menu instead).
 
